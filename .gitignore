@@ -180,6 +180,10 @@ $RECYCLE.BIN/
 *.ogg
 *.raw
 
+# Exception: the master recording used by the full-file workflow test
+# (all other .wav files remain ignored, including derived splits)
+!testmaterial/c and f.wav
+
 # uv / lock (committed by default for reproducibility — uncomment if you prefer not to commit)
 # uv.lock is committed for this project to guarantee identical environments.
 
