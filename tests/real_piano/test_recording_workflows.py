@@ -158,7 +158,7 @@ def feed_master_recording_with_guided_sequence(
     *,
     chunk_ms: int = 60,
     max_duration_s: float = 70.0,
-) -> int:
+) -> tuple[int, list[int]]:
     """
     Feed the full 'c and f.wav' master recording while using a predetermined
     target sequence for auto-arm/advance.
@@ -171,13 +171,23 @@ def feed_master_recording_with_guided_sequence(
     if not MASTER_RECORDING_PATH.exists():
         pytest.skip("Master recording not present")
 
-    sr, data = wavfile.read(MASTER_RECORDING_PATH)
-    if len(data.shape) > 1:
-        audio = data.mean(axis=1).astype(np.float32)
-    else:
+    # Prefer the compressed FLAC version (much smaller in git)
+    flac_path = MASTER_RECORDING_PATH.with_suffix(".flac")
+    if flac_path.exists():
+        import soundfile as sf
+        data, sr = sf.read(flac_path)
         audio = data.astype(np.float32)
+        if len(audio.shape) > 1:
+            audio = audio.mean(axis=1)
+    else:
+        # Fallback to WAV
+        sr, data = wavfile.read(MASTER_RECORDING_PATH)
+        if len(data.shape) > 1:
+            audio = data.mean(axis=1).astype(np.float32)
+        else:
+            audio = data.astype(np.float32)
 
-    # Normalize like the other simulation
+    # Normalize
     max_abs = np.max(np.abs(audio))
     if max_abs > 0:
         audio = audio / max_abs
