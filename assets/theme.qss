@@ -1,0 +1,60 @@
+/* OptiTune Professional Dark Theme (Phase 0 stub)
+ * Expanded in later phases for StrobeWidget, KeyboardWidget, pyqtgraph, etc.
+ * High contrast, bench-friendly, pro-audio aesthetic.
+ */
+
+QMainWindow {
+    background-color: #1e1e23;
+}
+
+QMenuBar {
+    background-color: #25252a;
+    color: #f0f0f5;
+    border-bottom: 1px solid #3a3a40;
+    padding: 2px 4px;
+}
+
+QMenuBar::item {
+    background: transparent;
+    padding: 6px 14px;
+    margin: 1px;
+    border-radius: 3px;
+}
+
+QMenuBar::item:selected {
+    background-color: #3a3a40;
+}
+
+QMenuBar::item:pressed {
+    background-color: #2a2a30;
+}
+
+QMenu {
+    background-color: #25252a;
+    color: #f0f0f5;
+    border: 1px solid #3a3a40;
+    padding: 4px 0;
+}
+
+QMenu::item {
+    padding: 6px 24px 6px 16px;
+}
+
+QMenu::item:selected {
+    background-color: #3a3a40;
+}
+
+QStatusBar {
+    background-color: #25252a;
+    color: #a0a0a5;
+    border-top: 1px solid #3a3a40;
+    font-size: 12px;
+}
+
+QLabel#centralLabel {
+    color: #a8a8b0;
+    font-size: 15pt;
+    line-height: 1.4;
+}
+
+/* Future widget styles live here (Strobe, CentsDisplay, Spectrum, etc.) */

@@ -1,0 +1,128 @@
+[
+  {
+    "label": "C1",
+    "dominant_peak_hz": 130.6,
+    "expected_midi": 24,
+    "start_time": 3.738,
+    "end_time": 8.998,
+    "duration": 5.259,
+    "pass": "C"
+  },
+  {
+    "label": "C2",
+    "dominant_peak_hz": 130.4,
+    "expected_midi": 36,
+    "start_time": 9.799,
+    "end_time": 13.479,
+    "duration": 3.68,
+    "pass": "C"
+  },
+  {
+    "label": "C3",
+    "dominant_peak_hz": 129.7,
+    "expected_midi": 48,
+    "start_time": 14.501,
+    "end_time": 17.624,
+    "duration": 3.123,
+    "pass": "C"
+  },
+  {
+    "label": "C4",
+    "dominant_peak_hz": 522.2,
+    "expected_midi": 60,
+    "start_time": 18.855,
+    "end_time": 21.258,
+    "duration": 2.403,
+    "pass": "C"
+  },
+  {
+    "label": "C5",
+    "dominant_peak_hz": 522.9,
+    "expected_midi": 72,
+    "start_time": 22.732,
+    "end_time": 24.845,
+    "duration": 2.113,
+    "pass": "C"
+  },
+  {
+    "label": "C6",
+    "dominant_peak_hz": 1043.1,
+    "expected_midi": 84,
+    "start_time": 26.192,
+    "end_time": 28.549,
+    "duration": 2.357,
+    "pass": "C"
+  },
+  {
+    "label": "C7",
+    "dominant_peak_hz": 2094.9,
+    "expected_midi": 96,
+    "start_time": 30.302,
+    "end_time": 30.674,
+    "duration": 0.372,
+    "pass": "C"
+  },
+  {
+    "label": "F1",
+    "dominant_peak_hz": 130.3,
+    "expected_midi": 29,
+    "start_time": 35.283,
+    "end_time": 38.812,
+    "duration": 3.529,
+    "pass": "F"
+  },
+  {
+    "label": "F2",
+    "dominant_peak_hz": 435.5,
+    "expected_midi": 41,
+    "start_time": 39.544,
+    "end_time": 42.307,
+    "duration": 2.763,
+    "pass": "F"
+  },
+  {
+    "label": "F3",
+    "dominant_peak_hz": 699.0,
+    "expected_midi": 53,
+    "start_time": 43.456,
+    "end_time": 46.823,
+    "duration": 3.367,
+    "pass": "F"
+  },
+  {
+    "label": "F4",
+    "dominant_peak_hz": 349.0,
+    "expected_midi": 65,
+    "start_time": 48.855,
+    "end_time": 51.897,
+    "duration": 3.042,
+    "pass": "F"
+  },
+  {
+    "label": "F5",
+    "dominant_peak_hz": 701.0,
+    "expected_midi": 77,
+    "start_time": 53.394,
+    "end_time": 55.38,
+    "duration": 1.985,
+    "pass": "F"
+  },
+  {
+    "label": "F6",
+    "dominant_peak_hz": 702.2,
+    "expected_midi": 89,
+    "start_time": 55.681,
+    "end_time": 56.216,
+    "duration": 0.534,
+    "pass": "F"
+  },
+  {
+    "label": "F7",
+    "dominant_peak_hz": 1396.2,
+    "expected_midi": 101,
+    "start_time": 58.236,
+    "end_time": 59.803,
+    "duration": 1.567,
+    "pass": "F"
+  }
+]

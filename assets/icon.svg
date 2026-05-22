@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none">
+  <!-- OptiTune icon: minimalist tuning fork + audio waveform -->
+  <!-- Background circle (subtle) -->
+  <circle cx="128" cy="128" r="118" fill="#1e1e23" stroke="#3a3a40" stroke-width="8"/>
+
+  <!-- Tuning fork stem -->
+  <rect x="122" y="48" width="12" height="120" rx="2" fill="#f0f0f5"/>
+
+  <!-- Left fork tine -->
+  <path d="M 100 48 Q 72 48 72 78" stroke="#f0f0f5" stroke-width="11" stroke-linecap="round" fill="none"/>
+  <!-- Right fork tine -->
+  <path d="M 156 48 Q 184 48 184 78" stroke="#f0f0f5" stroke-width="11" stroke-linecap="round" fill="none"/>
+
+  <!-- Crossbar of fork -->
+  <rect x="68" y="70" width="120" height="10" rx="2" fill="#f0f0f5"/>
+
+  <!-- Stylized waveform (representing audio analysis) -->
+  <!-- Fundamental + partials hint -->
+  <path d="M 48 168 Q 58 148 68 168 Q 78 188 88 168 Q 98 140 108 168 Q 118 195 128 168"
+        stroke="#6aa0ff" stroke-width="4" stroke-linecap="round" fill="none" opacity="0.9"/>
+  <path d="M 128 168 Q 138 155 148 168 Q 158 180 168 168 Q 178 152 188 168 Q 198 182 208 168"
+        stroke="#a0c0ff" stroke-width="3" stroke-linecap="round" fill="none" opacity="0.75"/>
+
+  <!-- Subtle cent markers -->
+  <circle cx="72" cy="205" r="3" fill="#f0f0f5" opacity="0.6"/>
+  <circle cx="128" cy="205" r="3" fill="#f0f0f5" opacity="0.6"/>
+  <circle cx="184" cy="205" r="3" fill="#f0f0f5" opacity="0.6"/>
+</svg>

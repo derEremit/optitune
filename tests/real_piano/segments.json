@@ -1,0 +1,128 @@
+[
+  {
+    "filename": "C1.wav",
+    "note_label": "C1",
+    "approx_midi": 24,
+    "start_time": 3.738,
+    "end_time": 8.998,
+    "duration": 5.259,
+    "pass": "C"
+  },
+  {
+    "filename": "C2.wav",
+    "note_label": "C2",
+    "approx_midi": 36,
+    "start_time": 9.799,
+    "end_time": 13.479,
+    "duration": 3.68,
+    "pass": "C"
+  },
+  {
+    "filename": "C3.wav",
+    "note_label": "C3",
+    "approx_midi": 48,
+    "start_time": 14.501,
+    "end_time": 17.624,
+    "duration": 3.123,
+    "pass": "C"
+  },
+  {
+    "filename": "C4.wav",
+    "note_label": "C4",
+    "approx_midi": 60,
+    "start_time": 18.855,
+    "end_time": 21.258,
+    "duration": 2.403,
+    "pass": "C"
+  },
+  {
+    "filename": "C5.wav",
+    "note_label": "C5",
+    "approx_midi": 72,
+    "start_time": 22.732,
+    "end_time": 24.845,
+    "duration": 2.113,
+    "pass": "C"
+  },
+  {
+    "filename": "C6.wav",
+    "note_label": "C6",
+    "approx_midi": 84,
+    "start_time": 26.192,
+    "end_time": 28.549,
+    "duration": 2.357,
+    "pass": "C"
+  },
+  {
+    "filename": "C7.wav",
+    "note_label": "C7",
+    "approx_midi": 96,
+    "start_time": 30.302,
+    "end_time": 30.674,
+    "duration": 0.372,
+    "pass": "C"
+  },
+  {
+    "filename": "F1.wav",
+    "note_label": "F1",
+    "approx_midi": 29,
+    "start_time": 35.283,
+    "end_time": 38.812,
+    "duration": 3.529,
+    "pass": "F"
+  },
+  {
+    "filename": "F2.wav",
+    "note_label": "F2",
+    "approx_midi": 41,
+    "start_time": 39.544,
+    "end_time": 42.307,
+    "duration": 2.763,
+    "pass": "F"
+  },
+  {
+    "filename": "F3.wav",
+    "note_label": "F3",
+    "approx_midi": 53,
+    "start_time": 43.456,
+    "end_time": 46.823,
+    "duration": 3.367,
+    "pass": "F"
+  },
+  {
+    "filename": "F4.wav",
+    "note_label": "F4",
+    "approx_midi": 65,
+    "start_time": 48.855,
+    "end_time": 51.897,
+    "duration": 3.042,
+    "pass": "F"
+  },
+  {
+    "filename": "F5.wav",
+    "note_label": "F5",
+    "approx_midi": 77,
+    "start_time": 53.394,
+    "end_time": 55.38,
+    "duration": 1.985,
+    "pass": "F"
+  },
+  {
+    "filename": "F6.wav",
+    "note_label": "F6",
+    "approx_midi": 89,
+    "start_time": 55.681,
+    "end_time": 56.216,
+    "duration": 0.534,
+    "pass": "F"
+  },
+  {
+    "filename": "F7.wav",
+    "note_label": "F7",
+    "approx_midi": 101,
+    "start_time": 58.236,
+    "end_time": 59.803,
+    "duration": 1.567,
+    "pass": "F"
+  }
+]
