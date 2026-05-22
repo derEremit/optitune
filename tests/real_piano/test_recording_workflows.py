@@ -32,7 +32,7 @@ from optitune.ui.main_window import OptiTuneMainWindow
 from optitune.ui.widgets.keyboard_widget import KeyState
 from tests.real_piano.loader import load_recording
 
-MASTER_RECORDING_PATH = Path(__file__).parent.parent.parent / "testmaterial" / "c and f.wav"
+MASTER_RECORDING_PATH = Path(__file__).parent.parent.parent / "testmaterial" / "c and f.flac"
 
 pytestmark = pytest.mark.real_piano
 
@@ -160,7 +160,7 @@ def feed_master_recording_with_guided_sequence(
     max_duration_s: float = 70.0,
 ) -> tuple[int, list[int]]:
     """
-    Feed the full 'c and f.wav' master recording while using a predetermined
+    Feed the full master recording (c and f.flac) while using a predetermined
     target sequence for auto-arm/advance.
 
     This simulates the user wanting to record a known scale/pattern (C then F)
@@ -168,20 +168,21 @@ def feed_master_recording_with_guided_sequence(
 
     Returns the number of successfully captured notes.
     """
-    if not MASTER_RECORDING_PATH.exists():
+    flac_path = MASTER_RECORDING_PATH.with_suffix(".flac")
+    if not MASTER_RECORDING_PATH.exists() and not flac_path.exists():
         pytest.skip("Master recording not present")
 
     # Prefer the compressed FLAC version (much smaller in git)
-    flac_path = MASTER_RECORDING_PATH.with_suffix(".flac")
-    if flac_path.exists():
+    if MASTER_RECORDING_PATH.exists():
         import soundfile as sf
-        data, sr = sf.read(flac_path)
+        data, sr = sf.read(MASTER_RECORDING_PATH)
         audio = data.astype(np.float32)
         if len(audio.shape) > 1:
             audio = audio.mean(axis=1)
     else:
-        # Fallback to WAV
-        sr, data = wavfile.read(MASTER_RECORDING_PATH)
+        # Fallback to original WAV (for users who still have it locally)
+        wav_path = MASTER_RECORDING_PATH.with_suffix(".wav")
+        sr, data = wavfile.read(wav_path)
         if len(data.shape) > 1:
             audio = data.mean(axis=1).astype(np.float32)
         else:
@@ -504,7 +505,7 @@ def test_play_full_master_recording_should_capture_correct_c_and_f_sequence(qtbo
     """
     The strong end-to-end scenario the user requested:
 
-    - Load the original full 'c and f.wav' (all C notes then all F notes in one take)
+    - Load the master recording (c and f.flac, originally recorded as WAV)
     - Arm on C1
     - Play/feed the entire performance
     - The system should correctly detect onsets, capture each note (~1.8s windows),
