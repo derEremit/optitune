@@ -237,11 +237,10 @@ identical targets; import an EPT fixture; `pytest tests/persistence/ -q` green.
 
 Spec §4.1 mandates worker threads; today all analysis runs on GUI-thread QTimers.
 
-- [ ] **STFT/analysis worker `QThread`s** — move `_run_live_analysis` DSP into an
-      analysis worker emitting `note_detected` / `partials_updated` /
-      `frame_ready` signals; GUI only renders. No shared mutable state beyond the
-      ring buffer. Real-master workflow tests must stay green (they exercise the
-      same signal path).
+- [ ] **STFT/analysis worker `QThread`s** — `dsp/analysis_worker.py` scaffold
+      (`AnalysisWorker` + `frame_ready` / drop-if-busy) + tests. **Still open:**
+      migrate MainWindow `_run_live_analysis` fully onto the worker so GUI only
+      renders; real-master tests must stay green on that path.
 - [ ] **pyfftw in the hot path** — promote from dev-extra to main dependency
       (keep `numpy.fft` fallback when unavailable); `FFTW_MEASURE` plan cache
       keyed by frame length. Benchmark test asserting analysis tick < 50 ms for

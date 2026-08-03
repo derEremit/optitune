@@ -15,6 +15,7 @@ from .binning import (
     slow_bin_spectrum,
 )
 from .f0_tracker import F0Tracker
+from .analysis_worker import AnalysisWorker, start_analysis_thread
 from .note_follow import NoteFollowMode, apply_follow_to_midi, search_window
 from .note_recognizer import (
     NoteMatch,
