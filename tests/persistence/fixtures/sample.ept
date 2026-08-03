@@ -1,19 +1,22 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Minimal hand-written EPT-style fixture for import tests -->
+<!-- Minimal hand-written EPT-style fixture for import tests.
+     key number = 0-based index from A0 (MIDI 21). -->
 <piano>
   <name>Fixture Piano</name>
   <concertPitch>440</concertPitch>
   <keys>
-    <key number="39">
-      <!-- EPT key numbers are often 0..87; we also accept midi attributes -->
-      <recordedFrequency>130.81</recordedFrequency>
+    <key number="15">
+      <!-- MIDI 36 = C2 -->
+      <recordedFrequency>65.41</recordedFrequency>
       <inharmonicity>0.00025</inharmonicity>
     </key>
-    <key number="48">
+    <key number="39">
+      <!-- MIDI 60 = C4 -->
       <recordedFrequency>261.63</recordedFrequency>
       <inharmonicity>0.0004</inharmonicity>
     </key>
-    <key number="57">
+    <key number="48">
+      <!-- MIDI 69 = A4 -->
       <recordedFrequency>440.0</recordedFrequency>
       <inharmonicity>0.0003</inharmonicity>
     </key>

@@ -224,8 +224,8 @@ recording pass → solve → tune → save) works in the GUI; all widget tests g
 - [x] **`.pfg` tuning-file format** — `persistence/tuning_file.py`: XML
       `<piano>/<meta>/<keyboard>/<key>` + zlib-base64 spectrum + tuning_curve.
       Round-trip test. XSD / hypothesis property test optional polish.
-- [ ] **EPT `.ept` import** — reader for the EPT XML outer structure mapping into
-      `Piano`. Test against a small hand-written `.ept` fixture.
+- [x] **EPT `.ept` import** — minimal reader (`persistence/ept_import.py`) for
+      name/A4/key f0+B; fixture test; File→Open accepts `.ept`.
 - [x] **Settings wrapper** — `persistence/settings.py` (`AppSettings`): audio
       device, scale session, temperament/A4, recent files. MainWindow scale +
       audio path migrated.

@@ -82,6 +82,7 @@ from optitune.ui.dialogs import (
 )
 from optitune.model.inharmonicity import measured_b_from_piano
 from optitune.persistence.settings import AppSettings
+from optitune.persistence.ept_import import load_ept
 from optitune.persistence.tuning_file import load_pfg, save_pfg
 from optitune.ui.widgets import (
     BCurveWidget,
@@ -1968,17 +1969,23 @@ class OptiTuneMainWindow(QMainWindow):
             self,
             "Open tuning file",
             "",
-            "OptiTune tuning (*.pfg);;JSON session (*.json);;All files (*)",
+            "OptiTune tuning (*.pfg);;EPT (*.ept);;JSON session (*.json);;All files (*)",
         )
         if not path:
             return
         try:
-            if path.lower().endswith(".pfg"):
+            low = path.lower()
+            if low.endswith(".pfg"):
                 piano, meta = load_pfg(path)
                 self._piano = piano
                 self._initial_a4 = float(piano.a4)
                 self._temperament = str(meta.get("temperament") or "equal")
                 self._current_pfg_path = path
+                self._app_settings.add_recent_file(path)
+            elif low.endswith(".ept"):
+                self._piano = load_ept(path)
+                self._initial_a4 = float(self._piano.a4)
+                self._current_pfg_path = None
                 self._app_settings.add_recent_file(path)
             else:
                 loaded = Piano.load_json(path)
