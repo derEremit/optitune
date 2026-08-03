@@ -65,7 +65,13 @@ from optitune.recording.scale_session import (
     ScaleSession,
     pitch_class_matches,
 )
-from optitune.solvers import BeatRateSolver, compute_basic_tuning_curve
+from optitune.solvers import (
+    BeatRateSolver,
+    TuningConstraints,
+    available_solvers,
+    compute_basic_tuning_curve,
+    get_solver,
+)
 from optitune.ui.dialogs import DeviceSelectorDialog
 from optitune.ui.widgets import (
     CentsDisplay,
@@ -394,10 +400,21 @@ class OptiTuneMainWindow(QMainWindow):
 
         tb.addSeparator()
 
+        tb.addWidget(QLabel(" Solver:"))
+        self._solver_combo = QComboBox()
+        for name in available_solvers():
+            self._solver_combo.addItem(name, name)
+        self._solver_combo.setToolTip(
+            "beat-rate: weighted interval LS (needs B measurements).\n"
+            "entropy: Hinrichsen spectrum entropy (needs cent spectra from Record)."
+        )
+        self._solver_combo.setMinimumWidth(110)
+        tb.addWidget(self._solver_combo)
+
         self._compute_action = QAction("📈 Compute Curve", self)
         self._compute_action.setShortcut("Ctrl+K")
         self._compute_action.setToolTip(
-            "Run minimal beat-rate stretch solver on recorded B values → live targets update immediately"
+            "Run selected solver on recorded measurements → live targets update immediately"
         )
         self._compute_action.triggered.connect(self._on_compute_curve)
         tb.addAction(self._compute_action)
@@ -1605,11 +1622,41 @@ class OptiTuneMainWindow(QMainWindow):
             )
 
         try:
-            # Prefer protocol solver (same math as compute_basic_tuning_curve)
-            try:
-                curve = BeatRateSolver().solve_piano(piano).as_list()
-            except Exception:
-                curve = compute_basic_tuning_curve(piano)
+            solver_name = "beat-rate"
+            if hasattr(self, "_solver_combo") and self._solver_combo is not None:
+                data = self._solver_combo.currentData()
+                if data:
+                    solver_name = str(data)
+            curve: list[float]
+            if solver_name == "entropy":
+                spectra = piano.cent_spectra_matrix()
+                if float(spectra.sum()) <= 0:
+                    QMessageBox.information(
+                        self,
+                        "Entropy solver",
+                        "No cent spectra stored yet. Record notes first "
+                        "(spectra are captured automatically on Record), "
+                        "or switch to beat-rate.",
+                    )
+                    return
+                import numpy as np
+
+                from optitune.solvers.base import MIDI_LOW, N_KEYS
+
+                b_est = np.full(N_KEYS, np.nan, dtype=float)
+                for m, k in piano.keys.items():
+                    if k.measured_b is not None:
+                        b_est[int(m) - MIDI_LOW] = float(k.measured_b)
+                solver = get_solver("entropy", seed=0, max_passes=12, railsback_prior=0.2)
+                tc = list(
+                    solver.solve(spectra.astype(float), b_est, TuningConstraints(a4=piano.a4))
+                )[-1]
+                curve = tc.as_list()
+            else:
+                try:
+                    curve = BeatRateSolver().solve_piano(piano).as_list()
+                except Exception:
+                    curve = compute_basic_tuning_curve(piano)
             piano.tuning_curve = curve
             # Also push offsets back into any recorded Key objects
             for k in piano.keys.values():

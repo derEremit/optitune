@@ -167,15 +167,10 @@ entropy and friends are not started.
 - [x] **Per-key cent spectra storage** — `Key.cent_spectrum` + zlib/base64 codec;
       populated on Record from ring buffer; `Piano.cent_spectra_matrix()` for
       `Solver.solve`. Synthetic tone test: partial bins have energy.
-- [ ] **Entropy solver** — `src/optitune/solvers/entropy.py` per spec §5
-      pseudocode: cent-shift = index shift, incremental `p` update (diff regions,
-      not full `np.roll`), zero-T Monte Carlo, seeded `default_rng`, stop on K
-      consecutive rejections + `H_new < H − eps` + pass cap. Numba only if the
-      pure-NumPy sweep exceeds ~100 ms. Tests: (a) deterministic given seed;
-      (b) on a synthetic realistic-B 88-key piano the result is Railsback-shaped
-      (bass negative, treble positive, ~monotone envelope) and within ~2 cents of
-      the beat-rate solver at the extremes; (c) two detuned copies of the same
-      spectrum converge to alignment.
+- [x] **Entropy solver** — `solvers/entropy.py`: zero-T MC, seeded, incremental
+      roll updates, A4 pin, optional Railsback prior, yields intermediate curves.
+      Tests: deterministic, A4 pin, detuned pair aligns, prior shape. GUI Solver
+      combo (beat-rate | entropy) + registry. Numba deferred (pure NumPy ok).
 - [ ] **Octave-local entropy** — `src/optitune/solvers/entropy_octave.py`
       (Szwajcowski–Pilch, spec §6.3): one variable per key, ~50 trial cents,
       outward from A4, deterministic. ~100 LOC reusing the entropy machinery.

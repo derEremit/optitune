@@ -13,15 +13,20 @@ from .beat_rate import (
     compute_beat_rate_for_interval,
 )
 from .beat_rate_solver import BeatRateSolver
+from .entropy import EntropySolver
+from .registry import available_solvers, get_solver
 from .simple_stretch import compute_heuristic_stretch_curve
 
 __all__ = [
     "BeatRateSolver",
+    "EntropySolver",
     "Solver",
     "TuningConstraints",
     "TuningCurve",
     "apply_curve_to_piano",
+    "available_solvers",
     "compute_basic_tuning_curve",
     "compute_beat_rate_for_interval",
     "compute_heuristic_stretch_curve",
+    "get_solver",
 ]
