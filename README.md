@@ -55,7 +55,8 @@ suite + Railsback/B graphs + `.pfg` / EPT files. Roadmap to `v1.0.0` in
 | Railsback + B-curve graphs, interval weights, pitch-raise | ✅ |
 | `.pfg` save/load, EPT import, crash autosave JSON | ✅ |
 | Free comb recognizer on some high/low F notes | 🚧 soft xfails (armed scale path is solid) |
-| NMF deep B, Flatpak, PyPI, full user guide | ⏳ later milestones |
+| User guide + Flatpak scaffold + `uv build` | ✅ scaffold |
+| NMF deep B, published Flatpak/PyPI, 1.0 tag | ⏳ later |
 
 ### How to check live status
 

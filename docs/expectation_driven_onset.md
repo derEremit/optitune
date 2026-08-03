@@ -1,8 +1,9 @@
 # Design Document: Expectation-Driven Onset Detection for Scale Recording Workflows
 
 **Version**: 1.1  
-**Status**: Reviewed & Revised  
-**Last Updated**: 2026-05-22
+**Status**: **Shipped** (core in `0.3.0`–`0.5.0` via `ScaleSession` + real-master C-then-F)  
+**Last Updated**: 2026-08-03  
+**User guide**: [user_guide.md](user_guide.md)
 
 ## 1. Problem Statement & Goals
 

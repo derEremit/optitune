@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.optitune.OptiTune</id>
+  <name>OptiTune</name>
+  <summary>Professional Linux piano tuning workstation</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <description>
+    <p>
+      OptiTune is an open-source piano tuning workstation for Linux: live strobe
+      and cents, spectrum, hands-free scale recording, beat-rate and entropy
+      stretch solvers, and .pfg session files.
+    </p>
+  </description>
+  <launchable type="desktop-id">org.optitune.OptiTune.desktop</launchable>
+  <url type="homepage">https://github.com/derEremit/optitune</url>
+  <url type="bugtracker">https://github.com/derEremit/optitune/issues</url>
+  <provides>
+    <binary>optitune</binary>
+  </provides>
+  <releases>
+    <release version="0.5.0" date="2026-08-03"/>
+  </releases>
+  <content_rating type="oars-1.1"/>
+</component>

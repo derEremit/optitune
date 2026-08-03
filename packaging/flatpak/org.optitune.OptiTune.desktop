@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=OptiTune
+GenericName=Piano Tuner
+Comment=Professional Linux piano tuning workstation
+Exec=optitune
+Icon=org.optitune.OptiTune
+Terminal=false
+Categories=AudioVideo;Audio;Education;
+Keywords=piano;tuner;intonation;strobe;
+StartupNotify=true

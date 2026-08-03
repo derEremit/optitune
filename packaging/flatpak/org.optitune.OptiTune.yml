@@ -1,0 +1,35 @@
+# Flatpak manifest scaffold for OptiTune (org.optitune.OptiTune).
+# Build (when flatpak-builder + runtime are installed):
+#   flatpak-builder --user --install --force-clean build-dir packaging/flatpak/org.optitune.OptiTune.yml
+#
+# This is a development scaffold: the python3-base / pip modules may need
+# adjusting for your Flatpak SDK version. CI may run this as a non-blocking job.
+
+app-id: org.optitune.OptiTune
+runtime: org.freedesktop.Platform
+runtime-version: "24.08"
+sdk: org.freedesktop.Sdk
+command: optitune
+finish-args:
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --socket=pulseaudio
+  - --device=all
+  - --filesystem=home
+  - --env=QT_QPA_PLATFORM=wayland;xcb
+
+modules:
+  - name: optitune
+    buildsystem: simple
+    build-commands:
+      - pip3 install --prefix=${FLATPAK_DEST} .
+      - install -Dm644 packaging/flatpak/org.optitune.OptiTune.desktop
+          ${FLATPAK_DEST}/share/applications/org.optitune.OptiTune.desktop
+      - install -Dm644 packaging/flatpak/org.optitune.OptiTune.metainfo.xml
+          ${FLATPAK_DEST}/share/metainfo/org.optitune.OptiTune.metainfo.xml
+      - install -Dm644 assets/icon.svg
+          ${FLATPAK_DEST}/share/icons/hicolor/scalable/apps/org.optitune.OptiTune.svg
+    sources:
+      - type: dir
+        path: ../..

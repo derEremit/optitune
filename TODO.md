@@ -245,8 +245,9 @@ Spec §4.1 mandates worker threads; today all analysis runs on GUI-thread QTimer
 - [x] **pyfftw in the hot path** — `dsp/fft_backend.py`: optional pyfftw with
       plan cache + NumPy fallback; wired into pitch_estimate / note_recognizer /
       spectrum_codec. Still a dev-extra; auto-used when installed.
-- [ ] **Latency/CPU budget** — strobe at 60 Hz without dropped frames while
-      analysis runs; measure with a stress test feeding continuous audio.
+- [x] **Latency/CPU budget** — `tests/dsp/test_analysis_latency.py`: soft
+      median budgets for 8k/32k/65k frames + continuous 8-frame feed. Strobe
+      stays on its own 60 Hz timer (unchanged).
 - [x] **Crash-safety (JSON)** — corrupt `current_piano.json` → load returns
       None; MainWindow still constructs and can start a fresh piano.
 - [x] **Crash-safety (audio)** — `AudioCapture.restart` / `health_ok`; callback
@@ -259,15 +260,12 @@ all tests green; CPU < ~1 core sustained during live tuning.
 
 ## Milestone 7 — Release engineering → `v1.0.0`
 
-- [ ] **Docs** — rewrite README (features, screenshots, quickstart, parity
-      table); `docs/user_guide.md` walking spec §8's workflow; update
-      `docs/expectation_driven_onset.md` status header to "shipped".
-- [ ] **Packaging: PyPI** — verify sdist/wheel build (`uv build`), console script
-      + GUI entry, `optitune --version` correct; TestPyPI dry-run.
-- [ ] **Packaging: Flatpak** — manifest under `packaging/flatpak/`
-      (org.optitune.OptiTune), desktop file + AppStream metainfo + icon from
-      `assets/icon.svg`; build via flatpak-builder in CI (allowed to be a
-      separate, non-blocking job initially).
+- [x] **Docs (partial)** — README at 0.5.0; `docs/user_guide.md` (full session
+      walkthrough); expectation design header → shipped. Screenshots still open.
+- [x] **Packaging: PyPI smoke** — `uv build` sdist+wheel; `optitune --version`;
+      packaging smoke tests. TestPyPI dry-run still open.
+- [x] **Packaging: Flatpak scaffold** — `packaging/flatpak/` manifest, desktop,
+      AppStream metainfo, icon path. Live flatpak-builder CI job still open.
 - [ ] **Release QA on a real piano** — one full tuning session end-to-end by the
       user; file issues found as 1.0.x bugfix scope, not release blockers unless
       workflow-breaking.
