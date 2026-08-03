@@ -154,6 +154,7 @@ class OptiTuneMainWindow(QMainWindow):
         self._auto_advance_after_record: bool = True  # very useful for walking the piano
         # Expectation layer (pure SM) — properties below mirror fields for compat
         self._scale_session = ScaleSession()
+        self._last_recorded_midi: int | None = None
         self._prev_level_db: float = -60.0
         self._last_during_cap_check: float = 0.0
         self._curve_status_label: QLabel | None = None
@@ -166,6 +167,8 @@ class OptiTuneMainWindow(QMainWindow):
 
         # Try to restore previous piano session (measurements + curve)
         self._load_persisted_piano()
+        # Resume scale series if the previous session was interrupted mid-arm
+        self._restore_scale_session_settings()
 
         # Wire audio + start capture if we have a device (CLI wins, else last saved)
         self._initialize_audio()
@@ -653,22 +656,14 @@ class OptiTuneMainWindow(QMainWindow):
                 _diag(f"[DIAG] CAPTURE FINISHED | target={self._record_selected_midi}")
                 self._finish_auto_capture(commit=True)
 
-            # --- During-capture validation + subtle rejection feedback (priority 5) ---
-            # While recording in scale mode we continuously validate the live estimate
-            # against the expected pitch class (using the same tolerance as commit time)
-            # and against the armed target. This is the "continuous mid-capture" path
-            # from the design. On mismatch we:
-            #   - Log a clear rejection (for diagnostics)
-            #   - Set a short rejection window (can drive subtle visual feedback later,
-            #     e.g. brief flash on the armed key or status message)
-            # We do *not* abort the capture here (keeps controller pure); the strong
-            # commit-time gate in _decide_commit_and_maybe_switch remains the final authority.
+            # --- During-capture validation + subtle rejection feedback ---
+            # Live estimate vs expected class/target while recording. Does not
+            # abort capture (controller stays energy-only); commit gate is final.
             if (
                 self._auto_record_ctrl.is_recording
                 and self._scale_pitch_class is not None
                 and self._record_selected_midi is not None
                 and self._last_est is not None
-                # Throttle to keep logs reasonable (~3x per second max)
                 and (now - self._last_during_cap_check) > 0.32
             ):
                 self._last_during_cap_check = now
@@ -676,22 +671,14 @@ class OptiTuneMainWindow(QMainWindow):
                 if est_m is not None:
                     armed = self._record_selected_midi
                     scale_pc = self._scale_pitch_class
-
-                    # Class check (same fuzzy logic as onset gate)
                     class_ok = self._pitch_class_matches_expectation(float(est_m), scale_pc)
-
-                    # Target tolerance check (same 140¢ used at commit)
                     target_err = self._cents_error_to_target(
                         self._last_est.get("f_est", est_m), armed
                     )
                     target_ok = (
                         target_err is None or abs(target_err) <= self.SCALE_MODE_CENT_TOLERANCE
                     )
-
-                    # During capture we are more tolerant of the estimator's known weaknesses
-                    # on real low piano notes (octave jumps, strong partials). We still log
-                    # when it's clearly wrong so we have data for future improvements, but we
-                    # avoid spamming the rejection window on every decay frame.
+                    # Tolerate estimator octave/partial jumps on low piano notes
                     close_to_armed = armed is not None and abs(est_m - armed) <= 15
                     if (not class_ok or not target_ok) and not close_to_armed:
                         octave_err = self._is_probable_octave_or_partial_error(armed, est_m)
@@ -707,10 +694,11 @@ class OptiTuneMainWindow(QMainWindow):
                             class_ok,
                             err_str,
                         )
-                        # Set short rejection window for subtle feedback (UI can poll this)
                         self._during_capture_rejection_until = now + 0.4
+                        # Only re-trigger flash if not already flashing this key
+                        if self.keyboard.rejection_flash_midi != armed:
+                            self.keyboard.flash_rejection(armed, duration_ms=350)
                     else:
-                        # Good - optionally log stable periods at lower frequency (debug only)
                         if abs(est_m - armed) > 1.5 and (int(now * 10) % 8 == 0):
                             _diag(
                                 f"[DIAG][DuringCapture] OK but drifting | armed={armed} live≈{est_m}"
@@ -1106,6 +1094,7 @@ class OptiTuneMainWindow(QMainWindow):
 
                 self._scale_session.enter_scale(int(target), now=_t.time())
                 self._update_series_status()
+                self._persist_scale_session_settings()
                 _diag(
                     f"[DIAG][ScaleGate] Entered scale mode for pitch class {self._scale_pitch_class} (armed on {target})"
                 )
@@ -1143,6 +1132,7 @@ class OptiTuneMainWindow(QMainWindow):
 
             # Layer 1: leaving scale mode when the user explicitly stops arming
             self._scale_session.exit_scale()
+            self._clear_scale_session_settings()
             self._update_series_status()
             _diag("[DIAG][ScaleGate] Exited scale mode (manual disarm)")
 
@@ -1289,10 +1279,13 @@ class OptiTuneMainWindow(QMainWindow):
                 self._arm_record_action.setChecked(False)
                 self._arm_record_action.setText("🎯 Arm for Auto-Record")
                 self._scale_session.exit_scale()
+                self._clear_scale_session_settings()
                 self.statusBar().showMessage(
                     "Series complete — all C and F notes captured. Disarmed.",
                     6000,
                 )
+            if next_midi:
+                self._persist_scale_session_settings()
             self._update_series_status()
         else:
             self._auto_record_ctrl.disarm()
@@ -1626,6 +1619,72 @@ class OptiTuneMainWindow(QMainWindow):
         # never let persistence kill the app
         with contextlib.suppress(Exception):
             self._piano.save_json(Piano.default_persist_path())
+
+    def _persist_scale_session_settings(self) -> None:
+        """Write active series + arm target so a crash mid-session can resume."""
+        s = self._settings
+        pc = self._scale_pitch_class
+        if pc is None:
+            self._clear_scale_session_settings()
+            return
+        s.setValue("scale/active_pitch_class", int(pc))
+        if self._last_recorded_midi is not None:
+            s.setValue("scale/last_recorded_midi", int(self._last_recorded_midi))
+        else:
+            s.remove("scale/last_recorded_midi")
+        if self._record_selected_midi is not None:
+            s.setValue("scale/armed_midi", int(self._record_selected_midi))
+        else:
+            s.remove("scale/armed_midi")
+        s.sync()
+
+    def _clear_scale_session_settings(self) -> None:
+        s = self._settings
+        s.remove("scale/active_pitch_class")
+        s.remove("scale/last_recorded_midi")
+        s.remove("scale/armed_midi")
+        s.sync()
+
+    def _restore_scale_session_settings(self) -> None:
+        """If QSettings has an interrupted series, re-enter scale mode (not auto-armed)."""
+        s = self._settings
+        if not s.contains("scale/active_pitch_class"):
+            return
+        raw_pc = s.value("scale/active_pitch_class")
+        if raw_pc is None or raw_pc == "":
+            return
+        try:
+            pc = int(raw_pc)
+        except (TypeError, ValueError):
+            return
+        # Reconstruct a representative MIDI in that class for enter_scale
+        seed = next(m for m in range(21, 109) if m % 12 == pc)
+        import time as _t
+
+        self._scale_session.enter_scale(seed, now=_t.time())
+        if s.contains("scale/last_recorded_midi"):
+            try:
+                self._last_recorded_midi = int(s.value("scale/last_recorded_midi"))  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                self._last_recorded_midi = None
+        if s.contains("scale/armed_midi"):
+            try:
+                armed = int(s.value("scale/armed_midi"))  # type: ignore[arg-type]
+                self._record_selected_midi = armed
+                self.keyboard.set_current_key(armed)
+                self.keyboard.set_key_state(armed, KeyState.ARMED)
+            except (TypeError, ValueError):
+                pass
+        self._update_series_status()
+        armed_s = (
+            f"{self._record_selected_midi} ({midi_to_note_name(self._record_selected_midi)})"
+            if self._record_selected_midi is not None
+            else "—"
+        )
+        self.statusBar().showMessage(
+            f"Resumed series pc={pc}; target {armed_s}. Click Arm to continue.",
+            4000,
+        )
 
     # ---------------- Menu / toolbar handlers (updated for Phase 4) ----------------
 

@@ -129,10 +129,11 @@ deferred items).
       on arm / disarm / reject / successful advance. pytest-qt coverage.
 - [x] **Subtle rejection feedback** — `KeyboardWidget.flash_rejection` (hot pink
       flash, preserves ARMED); wired on commit reject in MainWindow. pytest-qt.
-- [x] **Series lifecycle UX (partial)** — paired C↔F exhaustion: clear target,
-      disarm, exit scale, status "Series complete…". Single-series→paired switch
-      message already existed. Still open: manual series exit control; persist
-      active series + last-recorded note in QSettings for crash resume.
+- [x] **Series lifecycle UX** — paired C↔F exhaustion: clear target, disarm,
+      exit scale, status "Series complete…". QSettings crash-resume for
+      `scale/active_pitch_class`, `last_recorded_midi`, `armed_midi` (restore
+      on startup; clear on disarm/complete). During-capture mismatch flashes
+      the armed key. Manual exit = disarm (already exits scale).
 - [x] **Onset gate + post-capture guards via ScaleSession** —
       `should_suppress_onset` + `set_post_capture_guards`; MainWindow mirrors
       ignore/require-strong fields as properties.
