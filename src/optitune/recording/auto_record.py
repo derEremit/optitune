@@ -13,10 +13,15 @@ All timing is explicit (pass `now` into on_level_tick) so tests are deterministi
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Optional
+
+# Controllable verbosity for heavy per-tick diagnostics (priority 6)
+# Set OPTITUNE_DIAG=1 (or verbose/full) to see every [DIAG][Onset] tick when armed.
+_DIAG_ONSET_VERBOSE = os.environ.get("OPTITUNE_DIAG", "0").lower() in ("1", "true", "yes", "verbose", "full", "on")
 
 
 class AutoRecordPhase(Enum):
@@ -98,6 +103,8 @@ class AutoRecordController:
         self._capture_end_time = None
         self._recent_loud_ticks = []
         self._prev_db = None
+        self._consecutive_loud = 0
+        self._recent_rises: list[float] = []
 
     def disarm(self) -> None:
         """User explicitly stops waiting / recording."""
@@ -106,6 +113,8 @@ class AutoRecordController:
         self._onset_start_time = None
         self._capture_end_time = None
         self._recent_loud_ticks = []
+        self._consecutive_loud = 0
+        self._recent_rises = []
 
     def on_level_tick(self, current_db: float, now: float) -> AutoRecordEvent | None:
         """
@@ -114,8 +123,10 @@ class AutoRecordController:
         Onset detection hardened on real piano recordings (C1–C7 + F1–F7).
 
         Strategy:
-        - Use a sliding window of recent "loud" ticks.
-        - Give extra credit for a clear attack (sudden rise in energy).
+        - Use consecutive loud ticks for sustained energy.
+        - Credit a clear attack (strong rise) if it occurred recently within the current loud streak.
+          This is critical for realistic note envelopes (fast attack transient + slower decay) and
+          for chunked simulation feeding where the exact confirming tick may not coincide with peak rise.
         - Make confirmation easier for high notes (they decay very fast in real recordings).
         - Still reject random noise / pedal thumps.
         """
@@ -123,8 +134,13 @@ class AutoRecordController:
             return None
 
         if self._phase == AutoRecordPhase.ARMED:
-            # Track previous dB for attack detection
-            prev_db = getattr(self, "_prev_db", current_db - 3.0)
+            # Track previous dB for attack detection.
+            # Handle the explicit None reset from arm() cleanly (first tick after arm
+            # or after a capture) so we never crash and the very first post-arm tick
+            # can participate in onset logic.
+            prev_db = getattr(self, "_prev_db", None)
+            if prev_db is None:
+                prev_db = current_db - 3.0
             self._prev_db = current_db
             db_rise = current_db - prev_db
 
@@ -133,38 +149,74 @@ class AutoRecordController:
             if not hasattr(self, "_recent_loud_ticks"):
                 self._recent_loud_ticks: list[bool] = []
 
-            # Strong attack gives an extra "loud vote"
-            strong_attack = db_rise > 6.0
-            self._recent_loud_ticks.append(loud or strong_attack)
+            # Track consecutive loud ticks at the end (stricter than sliding majority)
+            if loud:
+                self._consecutive_loud = getattr(self, "_consecutive_loud", 0) + 1
+            else:
+                self._consecutive_loud = 0
 
-            # Window size ~350-450 ms
-            if len(self._recent_loud_ticks) > 9:
+            # Keep short history for diagnostics only
+            self._recent_loud_ticks.append(loud)
+            if len(self._recent_loud_ticks) > 12:
                 self._recent_loud_ticks.pop(0)
 
-            loud_count = sum(1 for x in self._recent_loud_ticks if x)
+            # Track recent rises during the current loud streak.
+            # This lets us credit a strong attack transient even if it happened a few ticks earlier
+            # (by the time consec count reaches threshold, the instantaneous rise is often near zero).
+            if not hasattr(self, "_recent_rises"):
+                self._recent_rises: list[float] = []
+            if loud:
+                self._recent_rises.append(db_rise)
+                if len(self._recent_rises) > 10:  # ~500 ms look-back at 50 ms ticks
+                    self._recent_rises.pop(0)
+            else:
+                self._recent_rises = []
 
-            # Dynamic threshold based on target note height
-            # High notes in the user's real recordings are very short → lower bar
+            # Dynamic requirement: higher for low notes, still strict overall
             midi = self._target_midi or 60
-            octave = (midi - 24) // 12   # rough octave above C1
+            octave = (midi - 24) // 12
 
-            if octave >= 5:           # C6 and above (very short in real data)
-                needed = 3
-            elif octave >= 4:         # C5–B5
-                needed = 4
-            else:                     # C1–C4 (longer sustains)
-                needed = 5
+            if octave >= 5:      # High notes (C6+): allow slightly faster confirmation
+                needed_consecutive = 4
+            else:
+                needed_consecutive = 6   # Low/mid notes: require solid sustained attack
 
-            if loud_count >= needed:
+            # Extra strictness after a recent capture (post-capture attack requirement)
+            require_strong_attack = getattr(self, "_require_strong_attack_until", 0) > now
+            min_rise = 8.0 if require_strong_attack else 5.0
+
+            if _DIAG_ONSET_VERBOSE:
+                print(
+                    f"[DIAG][Onset] db={current_db:.1f} rise={db_rise:+.1f} "
+                    f"loud={loud} consec={self._consecutive_loud} needed={needed_consecutive} "
+                    f"strong_attack_req={require_strong_attack} target={self._target_midi}"
+                )
+
+            # Confirm if we have enough consecutive loud ticks *and* there was a sufficiently
+            # strong rise at some point in the recent loud streak (not only on this exact tick).
+            max_recent_rise = max(self._recent_rises) if self._recent_rises else db_rise
+            confirmed = (
+                self._consecutive_loud >= needed_consecutive and
+                max_recent_rise >= min_rise
+            )
+
+            if confirmed:
+                print(f"[DIAG][Onset] >>> ONSET CONFIRMED for {self._target_midi} (consec={self._consecutive_loud}, rise={db_rise:.1f}, max_recent_rise={max_recent_rise:.1f})")
                 self._phase = AutoRecordPhase.RECORDING
                 self._capture_end_time = now + (self._config.capture_duration_ms / 1000.0)
                 self._recent_loud_ticks = []
+                self._consecutive_loud = 0
+                self._recent_rises = []
                 self._prev_db = current_db
+                # Clear any pending strong-attack requirement
+                self._require_strong_attack_until = 0
                 return AutoRecordEvent.ONSET_CONFIRMED
 
-            # Reset history on long quiet periods
-            if len(self._recent_loud_ticks) >= 7 and loud_count <= 1:
+            # Occasional reset of history if mostly quiet
+            if len(self._recent_loud_ticks) >= 8 and sum(self._recent_loud_ticks) <= 2:
                 self._recent_loud_ticks = []
+                self._consecutive_loud = 0
+                self._recent_rises = []
 
             return None
 

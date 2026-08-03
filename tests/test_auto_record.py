@@ -71,12 +71,17 @@ def test_onset_confirmation_requires_sustained_level_above_threshold():
     assert event is None
     assert ctrl.phase == AutoRecordPhase.ARMED
 
+    # Clear attack (strong rise) into sustained loud — the recent-rise credit logic
+    # requires a >= min_rise transient somewhere in the loud streak for confirmation.
+    t = now + 0.1
+    event = ctrl.on_level_tick(current_db=-12.0, now=t)  # strong +6 dB rise from prior -18
+    assert event is None  # still building consec
+
     # Sustained loud sound for >= min_onset_confirmation_ms
     events = []
-    t = now + 0.1
     for i in range(10):  # ~500 ms of loud sound
         t += 0.05
-        ev = ctrl.on_level_tick(current_db=-18.0, now=t)
+        ev = ctrl.on_level_tick(current_db=-12.0, now=t)
         if ev:
             events.append(ev)
 
@@ -135,11 +140,16 @@ def test_configurable_onset_params_are_respected():
     ctrl = AutoRecordController(cfg)
     ctrl.arm(48)
 
-    # A sound at -30 dB should now count as onset (above the lower threshold)
+    # A sound at -30 dB should now count as onset (above the lower threshold).
+    # Include a clear attack rise so the recent-rise credit triggers confirmation.
     now = time.time()
-    # We don't need the full 280 ms anymore
     t = now
-    for _ in range(5):
+    # Establish a quiet baseline, then a clear strong attack rise into the note region.
+    t += 0.05
+    ctrl.on_level_tick(-55.0, now=t)  # quiet tick sets prev
+    t += 0.05
+    ev = ctrl.on_level_tick(-22.0, now=t)  # strong rise >5 into loud
+    for _ in range(6):
         t += 0.05
         ev = ctrl.on_level_tick(-32.0, now=t)
         if ev == AutoRecordEvent.ONSET_CONFIRMED:
@@ -165,6 +175,11 @@ def test_full_hands_free_cycle_with_auto_advance_simulation():
     now = time.time()
     t = now
     onset_event = None
+    # Quiet baseline then clear attack transient + sustained (exercises recent-rise credit)
+    t += 0.05
+    ctrl.on_level_tick(-55.0, now=t)
+    t += 0.05
+    ev = ctrl.on_level_tick(-5.0, now=t)  # strong rise
     while not onset_event and (t - now) < 2.0:
         t += 0.05
         ev = ctrl.on_level_tick(current_db=-15.0, now=t)
