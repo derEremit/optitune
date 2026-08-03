@@ -17,6 +17,7 @@ from typing import Any
 import numpy as np
 from scipy.signal import get_window
 
+from optitune.dsp.note_follow import NoteFollowMode, apply_follow_to_midi, search_window
 from optitune.dsp.note_recognizer import recognize_note
 from optitune.dsp.peaks import find_spectral_peaks, pfd_estimate_f0_b
 from optitune.dsp.synth import hz_to_midi, midi_to_hz
@@ -34,6 +35,8 @@ def estimate_pitch(
     last_f0_guess: float = 440.0,
     long_frame_samples: int = 65536,
     scale_cent_tol: float = SCALE_MODE_CENT_TOLERANCE,
+    follow_mode: NoteFollowMode | str = NoteFollowMode.AUTO,
+    locked_midi: int | None = None,
 ) -> dict[str, Any]:
     """
     Estimate f0 / MIDI / cents for a mono float buffer.
@@ -68,12 +71,23 @@ def estimate_pitch(
     f_dom = 440.0
     recognized_midi: int | None = None
 
+    mode = (
+        follow_mode
+        if isinstance(follow_mode, NoteFollowMode)
+        else NoteFollowMode(str(follow_mode))
+    )
+    # Prefer armed target as the lock anchor when recording; else explicit locked_midi
+    lock_anchor = armed_midi if armed_midi is not None else locked_midi
+    midi_lo, midi_hi = search_window(mode, lock_anchor)
+
     if len(peak_fs) >= 2:
         match = recognize_note(
             peak_fs=peak_fs,
             peak_as=peak_as,
             a4=a4,
-            prior_midi=armed_midi,
+            prior_midi=armed_midi if armed_midi is not None else lock_anchor,
+            midi_lo=midi_lo,
+            midi_hi=midi_hi,
         )
         if match is not None and match.confidence >= 0.52:
             recognized_midi = match.midi
@@ -159,6 +173,11 @@ def estimate_pitch(
     else:
         midi = int(midi_from_f)
     midi = max(21, min(108, int(midi)))
+    # Free-listening follow modes (scale armed path already pinned above)
+    if armed_midi is None:
+        followed = apply_follow_to_midi(mode, detected=midi, locked=lock_anchor)
+        if followed is not None:
+            midi = max(21, min(108, int(followed)))
 
     target_hz = midi_to_hz(midi, a4)
     if target_hz <= 0:

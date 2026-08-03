@@ -137,11 +137,11 @@ deferred items).
 - [x] **Onset gate + post-capture guards via ScaleSession** —
       `should_suppress_onset` + `set_post_capture_guards`; MainWindow mirrors
       ignore/require-strong fields as properties.
-- [ ] **Note-follow modes** (spec §3.6, parity row "Stepwise / Lock"): **Auto**
-      (recognizer picks any note), **Stepwise** (±1 semitone from locked note),
-      **Lock** (manual only) — toolbar selector; scale mode is a fourth,
-      workflow-driven mode. Recognizer logic lives in `dsp/note_recognizer.py`
-      from Milestone 1; UI mode just constrains its search window.
+- [x] **Note-follow modes** (spec §3.6): `NoteFollowMode` + `search_window` /
+      `apply_follow_to_midi` in `dsp/note_follow.py`; wired through
+      `estimate_pitch` and toolbar **Follow** combo (Auto / Stepwise / Lock).
+      Keyboard click sets the lock anchor. Scale/auto-record still uses armed
+      soft prior independently of free-listening follow mode.
 - [ ] **Generalize beyond C↔F** — series = any root pitch-class set the user
       arms; `_maybe_switch_series` already sees "third class" events (currently
       logged as ignored) — allow switching to any armed-workflow class, keep

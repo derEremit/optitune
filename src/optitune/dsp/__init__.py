@@ -15,6 +15,7 @@ from .binning import (
     slow_bin_spectrum,
 )
 from .f0_tracker import F0Tracker
+from .note_follow import NoteFollowMode, apply_follow_to_midi, search_window
 from .note_recognizer import (
     NoteMatch,
     recognize_from_audio,
@@ -44,8 +45,10 @@ __all__ = [
     "F_LO",
     "N_BINS",
     "F0Tracker",
+    "NoteFollowMode",
     "NoteMatch",
     "a_weight_db",
+    "apply_follow_to_midi",
     "apply_a_weight_to_binned",
     "bin_and_a_weight",
     "bin_center",
@@ -67,6 +70,7 @@ __all__ = [
     "pfd_estimate_f0_b",
     "recognize_from_audio",
     "recognize_note",
+    "search_window",
     "slow_bin_spectrum",
     "spectrum_from_audio",
 ]

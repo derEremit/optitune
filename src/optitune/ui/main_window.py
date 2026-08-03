@@ -20,6 +20,7 @@ import numpy as np
 from PySide6.QtCore import QSettings, Qt, QTimer, Slot
 from PySide6.QtGui import QAction, QCloseEvent, QColor, QPalette
 from PySide6.QtWidgets import (
+    QComboBox,
     QDialog,
     QLabel,
     QMainWindow,
@@ -47,6 +48,7 @@ from optitune.dsp import (
     midi_to_hz,
     midi_to_note_name,
 )
+from optitune.dsp.note_follow import NoteFollowMode
 from optitune.model import Key, Piano
 from optitune.recording.auto_record import (
     AutoRecordConfig,
@@ -155,6 +157,8 @@ class OptiTuneMainWindow(QMainWindow):
         # Expectation layer (pure SM) — properties below mirror fields for compat
         self._scale_session = ScaleSession()
         self._last_recorded_midi: int | None = None
+        self._note_follow_mode: NoteFollowMode = NoteFollowMode.AUTO
+        self._follow_locked_midi: int | None = None  # Lock/Stepwise anchor
         self._prev_level_db: float = -60.0
         self._last_during_cap_check: float = 0.0
         self._curve_status_label: QLabel | None = None
@@ -370,6 +374,23 @@ class OptiTuneMainWindow(QMainWindow):
         self._auto_advance_action.toggled.connect(self._update_auto_advance_ui)
         self._update_auto_advance_ui(True)
         tb.addAction(self._auto_advance_action)
+
+        tb.addSeparator()
+
+        # Note-follow modes (spec §3.6): Auto / Stepwise / Lock
+        tb.addWidget(QLabel(" Follow:"))
+        self._follow_combo = QComboBox()
+        self._follow_combo.addItem("Auto", NoteFollowMode.AUTO)
+        self._follow_combo.addItem("Stepwise", NoteFollowMode.STEPWISE)
+        self._follow_combo.addItem("Lock", NoteFollowMode.LOCK)
+        self._follow_combo.setToolTip(
+            "Auto: jump to any detected note.\n"
+            "Stepwise: only ±1 semitone from the locked key (anti-octave jumps).\n"
+            "Lock: keep the selected key; detection does not switch."
+        )
+        self._follow_combo.setMinimumWidth(100)
+        self._follow_combo.currentIndexChanged.connect(self._on_follow_mode_changed)
+        tb.addWidget(self._follow_combo)
 
         tb.addSeparator()
 
@@ -846,13 +867,22 @@ class OptiTuneMainWindow(QMainWindow):
         n = len(audio)
         if n < 256:
             return self._fallback_estimate(audio, fs, a4)
+        # Armed soft prior while in scale/auto-record; free listening uses follow mode.
+        in_record_workflow = (
+            self._scale_pitch_class is not None
+            or self._auto_record_ctrl.is_armed
+            or self._auto_record_ctrl.is_recording
+        )
+        armed = self._record_selected_midi if in_record_workflow else None
         return estimate_pitch(
             audio,
             fs,
             a4=a4,
-            armed_midi=self._record_selected_midi,
+            armed_midi=armed,
             last_f0_guess=self._last_f0_guess,
             scale_cent_tol=self.SCALE_MODE_CENT_TOLERANCE,
+            follow_mode=self._note_follow_mode,
+            locked_midi=self._follow_locked_midi,
         )
 
     def _fallback_estimate(self, audio: np.ndarray, fs: float, a4: float) -> dict:
@@ -926,10 +956,23 @@ class OptiTuneMainWindow(QMainWindow):
         """Clicking a key now also selects it as the target for the next Record operation."""
         self.keyboard.set_current_key(midi)
         self._record_selected_midi = midi
+        self._follow_locked_midi = midi  # anchor for Stepwise / Lock follow modes
         self.statusBar().showMessage(
             f"Key {midi} ({midi_to_note_name(midi)}) selected for recording. Play the note then click 'Record Note'.",
             3000,
         )
+
+    def _on_follow_mode_changed(self, _index: int) -> None:
+        data = self._follow_combo.currentData()
+        if isinstance(data, NoteFollowMode):
+            self._note_follow_mode = data
+        elif data is not None:
+            self._note_follow_mode = NoteFollowMode(str(data))
+        # Seed lock anchor from current selection if missing
+        if self._follow_locked_midi is None and self._record_selected_midi is not None:
+            self._follow_locked_midi = self._record_selected_midi
+        mode = self._note_follow_mode.value
+        self.statusBar().showMessage(f"Note follow: {mode}", 2000)
 
     def _on_record_note(self, visual_feedback: bool = True) -> None:
         """
