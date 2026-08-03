@@ -664,17 +664,7 @@ def _feed_master_with_real_auto_advance(
         )
         print("            (C1-C7 portion only — much faster iteration)")
 
-    captured = 0
     captured_midis: list[int] = []
-    start_time = time.time()
-    file_time = pos / sr
-
-    # Instrumentation for priority 7 iteration (longer diagnostic)
-    during_capture_rejects = 0
-    c_series_captured = 0
-    f_series_started = False
-    probable_octave_errors = 0  # from the new detector in main_window
-    scale_armed_ticks = 0  # ticks where we were armed in scale mode
 
     print("\n" + "=" * 80)
     print(
@@ -686,86 +676,40 @@ def _feed_master_with_real_auto_advance(
     # This overrides the default quiet mode so we see every Onset, ScaleGate, DuringCapture, etc.
     os.environ["OPTITUNE_DIAG"] = "full"
 
-    while pos < len(audio) and (time.time() - start_time) < max_duration_s:
-        end = min(pos + chunk_samples, len(audio))
-        if end > pos:
-            window.ringbuffer.push(audio[pos:end].astype(np.float32))
+    # Audio is fed faster than realtime (qtbot.wait(2) per 55 ms chunk). Wall-clock
+    # capture/ignore timers would swallow whole notes or flake. Drive time.time()
+    # from the audio playhead so 1.8 s capture == 1.8 s of audio.
+    real_time = time.time
+    t0 = real_time()
+    # pos is updated in-loop; read via list cell for closure mutability
+    playhead = [pos]
 
-        # === Level meter tick (this is where most onset decisions happen) ===
-        try:
-            window._update_level_meter()
+    def _sim_time() -> float:
+        return t0 + playhead[0] / float(sr)
 
-            # Try to get the latest dB the level meter saw
-            buf = window.ringbuffer.get_latest(1024)
-            if len(buf) > 0:
-                rms = float(np.sqrt(np.mean(buf**2)))
-                current_db = -60.0 if rms <= 1e-7 else 20.0 * np.log10(rms)
-            else:
-                current_db = -60.0
+    time.time = _sim_time  # type: ignore[assignment]
+    try:
+        _feed_master_loop(
+            window,
+            qtbot,
+            audio=audio,
+            sr=sr,
+            pos=pos,
+            chunk_samples=chunk_samples,
+            playhead=playhead,
+            captured_midis=captured_midis,
+        )
+    finally:
+        time.time = real_time  # type: ignore[assignment]
 
-            ctrl = window._auto_record_ctrl
-            phase = ctrl.phase.name
-            target = ctrl.target_midi
-            scale_class = getattr(window, "_scale_pitch_class", None)
-
-            # Get recent loud ticks count if available
-            recent = getattr(ctrl, "_recent_loud_ticks", [])
-            loud_count = sum(recent)
-            window_len = len(recent)
-
-            # Get last dB rise if we can
-            prev_db = getattr(ctrl, "_prev_db", None)
-            db_rise = round(current_db - prev_db, 1) if prev_db is not None else 0.0
-
-            # Log every level meter tick with rich context
-            print(
-                f"[{file_time:06.2f}s] "
-                f"dB={current_db:6.1f} | rise={db_rise:+5.1f} | "
-                f"phase={phase:8} | target={target} | "
-                f"scale={scale_class} | "
-                f"loud_ticks={loud_count}/{window_len} | "
-                f"ignore_until={getattr(window, '_ignore_onset_until', 0):.2f}"
-            )
-
-        except Exception as e:
-            print(f"[{file_time:06.2f}s] Level meter tick error: {e}")
-
-        # Lightweight counters for this diagnostic run
-        if getattr(window, "_scale_pitch_class", None) is not None:
-            ctrl = window._auto_record_ctrl
-            if ctrl.phase.name == "ARMED":
-                scale_armed_ticks += 1
-
-        # Run analysis on every chunk for the diagnostic feed. This ensures the
-        # Layer-1 scale gate (_pitch_class_matches_expectation) and the commit-time
-        # fresh estimator (_get_fresh_estimate_for_commit) always see recent audio
-        # during note attacks. (Matches the "strengthened simulation" experiment.)
-        with contextlib.suppress(Exception):
-            window._run_live_analysis()
-
-        # Instrumentation for #7: count during-capture rejections (fires when live est bad during capture window)
-        if getattr(window, "_during_capture_rejection_until", 0) > time.time():
-            during_capture_rejects += 1
-
-        # Detect newly measured keys (now safe: clean slate + real commits only)
-        if window._piano:
-            for m, k in list(window._piano.keys.items()):
-                if (
-                    k.measured_f0 is not None or k.measured_b is not None
-                ) and m not in captured_midis:
-                    captured_midis.append(m)
-                    captured += 1
-                    print(
-                        f"\n>>> NOTE CAPTURED: {m} ({midi_to_note_name(m)})  | total={captured}\n"
-                    )
-                    if m % 12 == 0:  # C class
-                        c_series_captured += 1
-                    elif m % 12 == 5:  # F class
-                        f_series_started = True
-
-        pos = end
-        file_time = pos / sr
-        qtbot.wait(2)
+    captured = len(captured_midis)
+    during_capture_rejects = 0  # filled below if we keep counters — see helper
+    # Re-read counters from helper via attributes set on window for SUMMARY
+    during_capture_rejects = int(getattr(window, "_diag_during_rejects", 0))
+    c_series_captured = int(getattr(window, "_diag_c_series", 0))
+    f_series_started = bool(getattr(window, "_diag_f_started", False))
+    scale_armed_ticks = int(getattr(window, "_diag_armed_ticks", 0))
+    probable_octave_errors = 0
 
     print("\n" + "=" * 80)
     print(f"RUN FINISHED — Captured {captured} notes: {sorted(captured_midis)}")
@@ -774,8 +718,6 @@ def _feed_master_with_real_auto_advance(
     print(f"  During-capture rejections observed: {during_capture_rejects}")
     print("=" * 80 + "\n")
 
-    # Machine-readable summary line for easy parsing / progress tracking across runs
-    # Format: SUMMARY: captured=N c_series=M f_started=bool during_rejects=K octave_errors=O armed_ticks=A mode=full|c_only
     mode = (
         "c_only"
         if (series == "C" or os.environ.get("OPTITUNE_FAST_C", "0").lower() in ("1", "true", "yes"))
@@ -788,6 +730,98 @@ def _feed_master_with_real_auto_advance(
     )
 
     return captured, captured_midis
+
+
+def _feed_master_loop(
+    window,
+    qtbot,
+    *,
+    audio,
+    sr,
+    pos,
+    chunk_samples,
+    playhead,
+    captured_midis,
+) -> None:
+    """Inner feed loop (time.time already patched to audio playhead)."""
+    during_capture_rejects = 0
+    c_series_captured = 0
+    f_series_started = False
+    scale_armed_ticks = 0
+
+    while pos < len(audio):
+        playhead[0] = pos
+        end = min(pos + chunk_samples, len(audio))
+        if end > pos:
+            window.ringbuffer.push(audio[pos:end].astype(np.float32))
+
+        file_time = pos / sr
+        try:
+            window._update_level_meter()
+
+            buf = window.ringbuffer.get_latest(1024)
+            if len(buf) > 0:
+                rms = float(np.sqrt(np.mean(buf**2)))
+                current_db = -60.0 if rms <= 1e-7 else 20.0 * np.log10(rms)
+            else:
+                current_db = -60.0
+
+            ctrl = window._auto_record_ctrl
+            phase = ctrl.phase.name
+            target = ctrl.target_midi
+            scale_class = getattr(window, "_scale_pitch_class", None)
+            recent = getattr(ctrl, "_recent_loud_ticks", [])
+            loud_count = sum(recent)
+            window_len = len(recent)
+            prev_db = getattr(ctrl, "_prev_db", None)
+            db_rise = round(current_db - prev_db, 1) if prev_db is not None else 0.0
+
+            print(
+                f"[{file_time:06.2f}s] "
+                f"dB={current_db:6.1f} | rise={db_rise:+5.1f} | "
+                f"phase={phase:8} | target={target} | "
+                f"scale={scale_class} | "
+                f"loud_ticks={loud_count}/{window_len} | "
+                f"ignore_until={getattr(window, '_ignore_onset_until', 0):.2f}"
+            )
+        except Exception as e:
+            print(f"[{file_time:06.2f}s] Level meter tick error: {e}")
+
+        if (
+            getattr(window, "_scale_pitch_class", None) is not None
+            and window._auto_record_ctrl.phase.name == "ARMED"
+        ):
+            scale_armed_ticks += 1
+
+        with contextlib.suppress(Exception):
+            window._run_live_analysis()
+
+        if getattr(window, "_during_capture_rejection_until", 0) > time.time():
+            during_capture_rejects += 1
+
+        if window._piano:
+            for m, k in list(window._piano.keys.items()):
+                if (
+                    k.measured_f0 is not None or k.measured_b is not None
+                ) and m not in captured_midis:
+                    captured_midis.append(m)
+                    print(
+                        f"\n>>> NOTE CAPTURED: {m} ({midi_to_note_name(m)})  | "
+                        f"total={len(captured_midis)}\n"
+                    )
+                    if m % 12 == 0:
+                        c_series_captured += 1
+                    elif m % 12 == 5:
+                        f_series_started = True
+
+        pos = end
+        playhead[0] = pos
+        qtbot.wait(1)
+
+    window._diag_during_rejects = during_capture_rejects
+    window._diag_c_series = c_series_captured
+    window._diag_f_started = f_series_started
+    window._diag_armed_ticks = scale_armed_ticks
 
 
 def _prepare_clean_armed_window(qtbot, first_midi: int = 24):

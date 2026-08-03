@@ -92,14 +92,16 @@ Everything downstream is blocked on this.
 - [ ] **Temporal f₀ tracking** — median/mode over the last N estimation ticks
       (attack frames are the outliers; decay is long). Expose as a small pure
       function so it's unit-testable without Qt.
-- [x] **Wire into the expectation layer** — comb recognizer feeds note identity +
-      soft prior into `_estimate_pitch` (armed target is prior only). Fine f0/B
-      still from PFD.
-- [ ] **Raise the real-master assertions** — step by step:
-      `test_play_c_series_only_with_real_auto_advance` from `>= 1` captured to the
-      full C series; then the full test to complete C-then-F with the series
-      switch. Run with `OPTITUNE_DIAG=full`, check the `SUMMARY:` line; iterate
-      with `OPTITUNE_FAST_C=1` until green.
+- [x] **Wire into the expectation layer** — pure `dsp.estimate_pitch` + dual
+      free/armed PFD; MainWindow thin adapter. Armed prior only when partial ladder
+      supports it.
+- [x] **Temporal f₀ tracking** — `dsp.f0_tracker.F0Tracker` (octave-cluster median);
+      wired into live analysis.
+- [x] **Deterministic master-feed sim** — `time.time` patched to audio playhead in
+      `_feed_master_with_real_auto_advance` (capture/ignore windows match audio).
+- [ ] **Raise the real-master assertions** — in progress:
+      `test_play_c_series_only_with_real_auto_advance` floor is **>= 2** (C1+C2,
+      deterministic). Next: full C series (7), then C-then-F.
 - [ ] **Polish recognizer on F1 + high F** — remaining 4 soft xfails on the harness
       (F1 octave-up; F5–F7 octave-down).
 
