@@ -72,7 +72,7 @@ from optitune.solvers import (
     compute_basic_tuning_curve,
     get_solver,
 )
-from optitune.ui.dialogs import DeviceSelectorDialog
+from optitune.ui.dialogs import DeviceSelectorDialog, NewPianoDialog
 from optitune.model.inharmonicity import measured_b_from_piano
 from optitune.ui.widgets import (
     BCurveWidget,
