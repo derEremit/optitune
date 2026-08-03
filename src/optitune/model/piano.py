@@ -66,6 +66,27 @@ class Piano:
             1 for k in self.keys.values() if k.measured_b is not None or k.measured_f0 is not None
         )
 
+    def cent_spectra_matrix(self, n_bins: int | None = None) -> "np.ndarray":
+        """
+        Shape (88, M) A-weighted cent spectra for Solver.solve.
+        Missing keys / missing spectra → zeros.
+        """
+        import numpy as np
+
+        from optitune.dsp.binning import N_BINS
+
+        M = int(n_bins) if n_bins is not None else N_BINS
+        mat = np.zeros((self.N_KEYS, M), dtype=np.float32)
+        for midi, k in self.keys.items():
+            if k.cent_spectrum is None:
+                continue
+            idx = int(midi) - self.MIDI_LOW
+            if 0 <= idx < self.N_KEYS:
+                row = np.asarray(k.cent_spectrum, dtype=np.float32).reshape(-1)
+                n = min(M, row.shape[0])
+                mat[idx, :n] = row[:n]
+        return mat
+
     # ---------------- JSON persistence (simple, human-readable) ----------------
 
     def to_dict(self) -> dict[str, Any]:

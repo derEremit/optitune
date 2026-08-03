@@ -1003,7 +1003,20 @@ class OptiTuneMainWindow(QMainWindow):
         f0 = float(self._last_est.get("f0", self._last_est.get("f_est", 440.0)))
         b = float(self._last_est.get("b", 0.0003))
 
-        k = Key(midi=midi, measured_f0=f0, measured_b=b)
+        # Capture A-weighted cent spectrum for entropy solver (compressed in JSON)
+        spectrum = None
+        try:
+            from optitune.model.spectrum_codec import spectrum_from_audio_a_weighted
+
+            fs = float(self.audio_capture.samplerate or 48000)
+            n = min(int(fs * 1.2), 65536)
+            audio = self.ringbuffer.get_latest(n)
+            if audio is not None and len(audio) >= 256:
+                spectrum = spectrum_from_audio_a_weighted(audio, fs)
+        except Exception:
+            spectrum = None
+
+        k = Key(midi=midi, measured_f0=f0, measured_b=b, cent_spectrum=spectrum)
         piano.set_key(k)
 
         if visual_feedback:
@@ -1592,7 +1605,11 @@ class OptiTuneMainWindow(QMainWindow):
             )
 
         try:
-            curve = compute_basic_tuning_curve(piano)
+            # Prefer protocol solver (same math as compute_basic_tuning_curve)
+            try:
+                curve = BeatRateSolver().solve_piano(piano).as_list()
+            except Exception:
+                curve = compute_basic_tuning_curve(piano)
             piano.tuning_curve = curve
             # Also push offsets back into any recorded Key objects
             for k in piano.keys.values():

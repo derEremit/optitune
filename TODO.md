@@ -164,11 +164,9 @@ entropy and friends are not started.
       `TuningCurve`, `Solver` protocol per spec §4.3. `BeatRateSolver` adapter
       yields one final curve matching `compute_basic_tuning_curve`; GUI uses
       `solve_piano`. Function API kept for existing tests.
-- [ ] **Per-key cent spectra storage** — the entropy solver needs the A-weighted
-      cent-binned SPLA per key (spec §2.3 step 3–4). Add `cent_spectrum` to
-      `model/key.py`, populate it during capture commit, include in JSON
-      persistence (compressed). Test: capture on synthetic tone stores a spectrum
-      whose argmax bins sit on the partials.
+- [x] **Per-key cent spectra storage** — `Key.cent_spectrum` + zlib/base64 codec;
+      populated on Record from ring buffer; `Piano.cent_spectra_matrix()` for
+      `Solver.solve`. Synthetic tone test: partial bins have energy.
 - [ ] **Entropy solver** — `src/optitune/solvers/entropy.py` per spec §5
       pseudocode: cent-shift = index shift, incremental `p` update (diff regions,
       not full `np.roll`), zero-T Monte Carlo, seeded `default_rng`, stop on K
