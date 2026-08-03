@@ -186,14 +186,13 @@ entropy and friends are not started.
       Offline "Deep analyze note" action. Test: on the 4 extreme synthetic-matrix
       cases that classical PFD xfails (P2, H1, H2, B1), NMF recovers B within 8 % —
       then flip those xfails to green via the NMF path.
-- [ ] **Pitch raise / overpull** — measure-pass on every ~4th key → B-curve fit →
-      overpull profile (Rigaud mean octave-type model, high/low variants) →
-      `ui/dialogs/pitch_raise.py` wizard. Test: 30-cent-flat synthetic piano
-      yields overpull targets above final targets, tapering treble-ward.
+- [x] **Pitch raise / overpull (core math)** — `solvers/pitch_raise.py`: Rigaud-style
+      taper profile (high/low/medium); overpull sits above final, bass > treble;
+      A4 pin. GUI wizard dialog deferred to M4 UX.
 
-**Milestone verification:** all solvers selectable in GUI and green in
-`tests/test_tuning_curve.py` + new solver tests; synthetic-matrix xfails resolved
-via NMF; CI time still acceptable (mark NMF tests `slow` if needed).
+**Milestone verification (partial):** beat-rate + entropy + octave-entropy selectable
+in GUI; protocol + worker + temperaments + pitch-raise math green. NMF deep-analyze
+and pitch-raise wizard still open before full `0.5.0`.
 
 ---
 

@@ -15,6 +15,7 @@ from .beat_rate import (
 from .beat_rate_solver import BeatRateSolver
 from .entropy import EntropySolver
 from .entropy_octave import OctaveEntropySolver
+from .pitch_raise import overpull_profile, pitch_raise_targets
 from .registry import available_solvers, get_solver
 from .simple_stretch import compute_heuristic_stretch_curve
 
@@ -31,4 +32,6 @@ __all__ = [
     "compute_beat_rate_for_interval",
     "compute_heuristic_stretch_curve",
     "get_solver",
+    "overpull_profile",
+    "pitch_raise_targets",
 ]
