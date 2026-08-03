@@ -1,3 +1,3 @@
 status: active
 tags: [agentic, low-hanging, publish-ready]
-summary: "GPL-3 Linux piano tuning workstation (PySide6) v0.2.0 — live strobe/spectrum UI, Fletcher-Young synthetic-tone TDD, beat-rate solver, expectation-driven scale recording. Roadmap to 1.0 in TODO.md; next blocker is low-note estimator robustness."
+summary: "GPL-3 Linux piano tuning workstation (PySide6) v0.3.0 — live strobe/spectrum UI, Fletcher-Young synthetic-tone TDD, beat-rate solver, expectation-driven scale recording. Roadmap to 1.0 in TODO.md; next blocker is low-note estimator robustness."

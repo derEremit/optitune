@@ -309,7 +309,24 @@ def simulate_play_real_note(
     with contextlib.suppress(Exception):
         window._update_level_meter()
 
+    # Pump meter/analysis until capture window ends (timers are stopped in
+    # _stop_real_audio; wall-clock wait alone never delivers CAPTURE_FINISHED).
+    _pump_capture_to_completion(window, qtbot)
     qtbot.wait(30)
+
+
+def _pump_capture_to_completion(window: OptiTuneMainWindow, qtbot, *, max_ms: int = 2000) -> None:
+    """Advance level-meter ticks until controller leaves RECORDING (or timeout)."""
+    steps = max(10, max_ms // 40)
+    for _ in range(steps):
+        with contextlib.suppress(Exception):
+            window._update_level_meter()
+        if not window._auto_record_ctrl.is_recording:
+            # One extra tick so finish/commit side effects run
+            with contextlib.suppress(Exception):
+                window._update_level_meter()
+            return
+        qtbot.wait(40)
 
 
 # =============================================================================
@@ -344,9 +361,6 @@ def test_record_one_note_using_real_recording(qtbot):
     # Now "play" the real C4 recording
     simulate_play_real_note(window, "C4", qtbot, pre_silence_ms=200, chunk_ms=60)
 
-    # Give the system time to finish the capture window + commit
-    qtbot.wait(2200)
-
     # After successful capture + commit, the key should be MEASURED
     # (and the controller should no longer be forcing ARMED/RECORDING on it)
     final_state = window.keyboard._states.get(target_midi)
@@ -378,51 +392,38 @@ def test_record_full_ascending_C_scale_with_auto_advance(qtbot):
 
     c_notes = ["C1", "C2", "C3", "C4", "C5", "C6", "C7"]
     base_midis = [24, 36, 48, 60, 72, 84, 96]
+    window._scale_pitch_class = 0
+    window._auto_advance_after_record = False  # we step targets manually below
 
     for i, (label, midi) in enumerate(zip(c_notes, base_midis, strict=False)):
-        # Use the helper so we get the dialog suppression + consistent behavior
-        _arm_for_note(window, midi, qtbot)
-        qtbot.wait(30)
+        # Clear post-capture guards so each isolated recording can onset cleanly
+        window._ignore_onset_until = 0.0
+        window._require_strong_attack_until = 0.0
+        window._scale_gate_grace_until = time.time() + 1.0
+        if hasattr(window, "_f0_tracker"):
+            window._f0_tracker.clear()
 
-        # Should be armed on this C
+        _arm_for_note(window, midi, qtbot)
+        qtbot.wait(20)
+
         assert window._auto_record_ctrl.target_midi == midi
         assert window._auto_record_ctrl.phase.name == "ARMED"
 
-        # Play the real recording for this note
         simulate_play_real_note(
             window,
             label,
             qtbot,
             pre_silence_ms=150,
             chunk_ms=65,
-            total_play_time_ms=2200,  # enough to cover the 1.8s capture + some tail
+            total_play_time_ms=2500,
         )
 
-        # Wait for capture to finish + processing
-        qtbot.wait(2400)
-
-        if i < len(c_notes) - 1:
-            # For this specific "record the C scale low to high" workflow test,
-            # we explicitly pick the next C we want instead of relying on the
-            # general "next unmeasured" heuristic in _on_record_next (which
-            # prefers middle-out and can pick wrong notes while the estimator
-            # is still bad on real piano).
-            next_midi = base_midis[i + 1]
-            window._record_selected_midi = next_midi
-            window.keyboard.set_current_key(next_midi)
-
-            # Re-arm the controller for the exact next note we want
-            window._auto_record_ctrl.arm(next_midi)
-            window.keyboard.set_key_state(next_midi, KeyState.ARMED)
-            window._arm_record_action.setChecked(True)
-            window._arm_record_action.setText("⏹ Stop Arming")
-
-            assert window._auto_record_ctrl.target_midi == next_midi
-            assert window._auto_record_ctrl.phase.name == "ARMED"
-            assert window.keyboard._states.get(next_midi) == KeyState.ARMED
-        else:
-            # After the last note (C7)
-            assert window._auto_record_ctrl.phase.name in ("IDLE", "ARMED")
+        # Must have committed this note before moving on
+        assert window.keyboard._states.get(midi) == KeyState.MEASURED, (
+            f"{label} (MIDI {midi}) not MEASURED after play; phase="
+            f"{window._auto_record_ctrl.phase.name}"
+        )
+        window._last_recorded_midi = midi
 
     # All C notes should now be marked MEASURED
     for midi in base_midis:
@@ -452,8 +453,6 @@ def test_record_soft_high_note_C7(qtbot):
 
     # Use the real (short) C7 recording
     simulate_play_real_note(window, "C7", qtbot, pre_silence_ms=100, chunk_ms=50)
-
-    qtbot.wait(2200)
 
     # Even the short/soft C7 should result in a committed measurement
     assert window.keyboard._states.get(midi) == KeyState.MEASURED

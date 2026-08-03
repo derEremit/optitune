@@ -53,6 +53,16 @@ from optitune.recording.auto_record import (
     AutoRecordController,
     AutoRecordEvent,
 )
+from optitune.recording.scale_session import (
+    ONSET_GATE_CENT_TOLERANCE as _ONSET_GATE_CENT_TOLERANCE,
+)
+from optitune.recording.scale_session import (
+    SCALE_MODE_CENT_TOLERANCE as _SCALE_MODE_CENT_TOLERANCE,
+)
+from optitune.recording.scale_session import (
+    ScaleSession,
+    pitch_class_matches,
+)
 from optitune.solvers import compute_basic_tuning_curve
 from optitune.ui.dialogs import DeviceSelectorDialog
 from optitune.ui.widgets import (
@@ -142,15 +152,10 @@ class OptiTuneMainWindow(QMainWindow):
             )
         )
         self._auto_advance_after_record: bool = True  # very useful for walking the piano
+        # Expectation layer (pure SM) — properties below mirror fields for compat
+        self._scale_session = ScaleSession()
         self._ignore_onset_until: float = 0.0
         self._require_strong_attack_until: float = 0.0
-        self._scale_pitch_class: int | None = None  # for "scale recording" mode
-        self._scale_gate_grace_until: float = (
-            0.0  # short window after (re)arm where we trust armed intent over noisy early est
-        )
-        self._during_capture_rejection_until: float = (
-            0.0  # for during-capture validation + subtle rejection feedback (step 5)
-        )
         self._prev_level_db: float = -60.0
         self._last_during_cap_check: float = 0.0
         self._curve_status_label: QLabel | None = None
@@ -1010,46 +1015,34 @@ class OptiTuneMainWindow(QMainWindow):
             k = piano.keys[m]
             return k.measured_b is None and k.measured_f0 is None
 
-        # === Dedicated scale recording mode ===
+        # === Dedicated scale recording mode (pure ScaleSession) ===
         if self._scale_pitch_class is not None:
-            # Workflow cap: C1-C7 (24-96) and F1-F7 (29-101). Do not arm C8/F8 or the
-            # series never switches and the scale gate blocks the other root class.
-            series_hi = {0: 96, 5: 101}.get(self._scale_pitch_class, 108)
-
-            # Find the lowest unmeasured note that matches the current pitch class,
-            # starting from the last recorded one and going upward (within series_hi).
-            start = (last or current) - ((last or current) % 12) + self._scale_pitch_class
-            for candidate in range(max(21, start), min(109, series_hi + 1), 12):
-                if is_unmeasured(candidate):
-                    self._record_selected_midi = candidate
-                    self.keyboard.set_current_key(candidate)
-                    self.statusBar().showMessage(
-                        f"Next to record: {candidate} ({midi_to_note_name(candidate)}).",
-                        3500,
+            measured = {
+                m
+                for m, k in piano.keys.items()
+                if k.measured_b is not None or k.measured_f0 is not None
+            }
+            prev_pc = self._scale_pitch_class
+            candidate = self._scale_session.next_target(
+                last_recorded=last, measured=measured, current=current
+            )
+            if candidate is not None:
+                if self._scale_pitch_class != prev_pc:
+                    _diag(
+                        f"[DIAG][AutoAdvance] Scale series pc={prev_pc} exhausted "
+                        f"(last={last}); switching to paired series pc={self._scale_pitch_class} "
+                        f"-> {candidate}"
                     )
-                    return
-
-            # If no more in this class, switch to the paired root-note series (C <-> F).
-            other_pc = {0: 5, 5: 0}.get(self._scale_pitch_class)
-            if other_pc is not None:
-                other_hi = {0: 96, 5: 101}.get(other_pc, 108)
-                # First MIDI of this pitch class on the piano (not 21+pc — that is wrong for F).
-                first_other = next(m for m in range(21, 109) if m % 12 == other_pc)
-                for candidate in range(first_other, min(109, other_hi + 1), 12):
-                    if is_unmeasured(candidate):
-                        _diag(
-                            f"[DIAG][AutoAdvance] Scale series pc={self._scale_pitch_class} exhausted "
-                            f"(last={last}); switching to paired series pc={other_pc} -> {candidate}"
-                        )
-                        self._scale_pitch_class = other_pc
-                        self._record_selected_midi = candidate
-                        self.keyboard.set_current_key(candidate)
-                        self.statusBar().showMessage(
-                            f"Series complete. Next series: {candidate} ({midi_to_note_name(candidate)}).",
-                            4000,
-                        )
-                        return
-
+                    msg = (
+                        f"Series complete. Next series: {candidate} "
+                        f"({midi_to_note_name(candidate)})."
+                    )
+                else:
+                    msg = f"Next to record: {candidate} ({midi_to_note_name(candidate)})."
+                self._record_selected_midi = candidate
+                self.keyboard.set_current_key(candidate)
+                self.statusBar().showMessage(msg, 4000)
+                return
             _diag(
                 f"[DIAG][AutoAdvance] Scale series for pc={self._scale_pitch_class} exhausted "
                 f"(last={last}). No paired series notes left; using ascending fallback."
@@ -1105,12 +1098,9 @@ class OptiTuneMainWindow(QMainWindow):
             # immediately enter scale mode for that pitch class. This gives the very first
             # note of the series (C1 or F1, etc.) the benefit of the pitch-class gate.
             if getattr(self, "_auto_advance_after_record", True) and target is not None:
-                self._scale_pitch_class = int(target) % 12
                 import time as _t
 
-                self._scale_gate_grace_until = (
-                    _t.time() + 0.65
-                )  # grace for transient est on real piano attacks
+                self._scale_session.enter_scale(int(target), now=_t.time())
                 _diag(
                     f"[DIAG][ScaleGate] Entered scale mode for pitch class {self._scale_pitch_class} (armed on {target})"
                 )
@@ -1147,7 +1137,7 @@ class OptiTuneMainWindow(QMainWindow):
             self._arm_record_action.setText("🎙️ Arm Auto-Record")
 
             # Layer 1: leaving scale mode when the user explicitly stops arming
-            self._scale_pitch_class = None
+            self._scale_session.exit_scale()
             _diag("[DIAG][ScaleGate] Exited scale mode (manual disarm)")
 
             # Revert visual state for the (ex-)target
@@ -1308,57 +1298,50 @@ class OptiTuneMainWindow(QMainWindow):
 
     # ---------------- Expectation-driven scale mode helpers (Layer 1+) ----------------
 
-    SCALE_MODE_CENT_TOLERANCE = 140.0
-    # Looser tolerance used *only* for the Layer-1 onset pre-filter gate.
-    # Real piano low-note attacks + chunked feeding often produce transient ests
-    # that are 1 octave or partial-biased (e.g. 500-800 cents off the true fund).
-    # The authoritative commit-time decision (_decide_commit_and_maybe_switch +
-    # fresh estimator) still uses the strict SCALE tolerance + class check.
-    ONSET_GATE_CENT_TOLERANCE = 800.0
+    SCALE_MODE_CENT_TOLERANCE = _SCALE_MODE_CENT_TOLERANCE
+    ONSET_GATE_CENT_TOLERANCE = _ONSET_GATE_CENT_TOLERANCE
+
+    @property
+    def _scale_pitch_class(self) -> int | None:
+        return self._scale_session.scale_pitch_class
+
+    @_scale_pitch_class.setter
+    def _scale_pitch_class(self, value: int | None) -> None:
+        self._scale_session.scale_pitch_class = value
+
+    @property
+    def _scale_gate_grace_until(self) -> float:
+        return self._scale_session.grace_until
+
+    @_scale_gate_grace_until.setter
+    def _scale_gate_grace_until(self, value: float) -> None:
+        self._scale_session.grace_until = float(value)
+
+    @property
+    def _during_capture_rejection_until(self) -> float:
+        return self._scale_session.during_capture_rejection_until
+
+    @_during_capture_rejection_until.setter
+    def _during_capture_rejection_until(self, value: float) -> None:
+        self._scale_session.during_capture_rejection_until = float(value)
 
     def _pitch_class_matches_expectation(
         self, est_midi_f: float | None, expected_pc: int, *, tolerance: float | None = None
     ) -> bool:
-        """
-        Return True if the estimated continuous MIDI value is within
-        the given tolerance (default: SCALE_MODE_CENT_TOLERANCE) cents of a note
-        whose pitch class matches expected_pc.
-
-        The onset gate (Layer 1 pre-filter) calls with the looser ONSET_GATE_CENT_TOLERANCE
-        to tolerate transient octave/partial estimation errors on real low piano notes.
-        Commit-time validation always uses the strict default.
-        """
-        if est_midi_f is None:
-            return (
-                False  # conservative: if we have no estimate, don't trust the onset in scale mode
-            )
-
+        """Delegate to pure scale_session.pitch_class_matches."""
+        f_est = None
         try:
-            f_est = self._last_est.get("f_est") if self._last_est else None
-            if f_est is None or f_est <= 1:
-                # fall back to the (rounded) midi we were given
-                midi_f = float(est_midi_f)
-            else:
-                midi_f = hz_to_midi(float(f_est), self._initial_a4)
+            if self._last_est:
+                f_est = self._last_est.get("f_est")
         except Exception:
-            midi_f = float(est_midi_f) if est_midi_f is not None else 60.0
-
-        # Find the closest note (in cents) whose MIDI % 12 == expected_pc
-        # Search a couple of octaves around the observation
-        base = round(midi_f)
-        best_dist = 9999.0
-        for oct_off in (-2, -1, 0, 1, 2):
-            for delta in (-12, 0, 12):
-                cand = base + oct_off * 12 + delta
-                if 21 <= cand <= 108 and (cand % 12) == (expected_pc % 12):
-                    # cents distance = |cand - midi_f| * 100
-                    d = abs(cand - midi_f) * 100.0
-                    if d < best_dist:
-                        best_dist = d
-
-        tol = tolerance if tolerance is not None else self.SCALE_MODE_CENT_TOLERANCE
-        matches = best_dist <= tol
-        return matches
+            f_est = None
+        return pitch_class_matches(
+            est_midi_f,
+            expected_pc,
+            tolerance=tolerance if tolerance is not None else self.SCALE_MODE_CENT_TOLERANCE,
+            f_est=float(f_est) if f_est else None,
+            a4=self._initial_a4,
+        )
 
     def _decide_commit_and_maybe_switch(self) -> bool:
         """

@@ -8,6 +8,15 @@ former `TODO.md`, which served as the living changelog during Phases 0–4.
 
 ---
 
+## [0.3.0] — 2026-08-03
+
+Low-note estimator robustness + hands-free scale workflow (Milestone 1):
+
+- Full C1-C7 then F1-F7 auto-advance on real master (`test_play_full_master...`)
+- Pure `estimate_pitch` / `F0Tracker` / dual free-armed PFD
+- Shorter capture (1.1s), high-note onset, sim playhead time, series switch after C7
+- Free comb recognizer still soft-xfails a few F notes (armed workflow is solid)
+
 ## [Unreleased] — Milestone 1 (low-note estimator) largely done
 
 - **Hands-free C-then-F on real master**: full auto-advance captures C1–C7 then
@@ -32,6 +41,15 @@ Repo & code-health baseline (Milestone 0):
   stdout for scripting.
 - README rewritten to match Phases 0–4 done + expectation-driven recording in
   progress; version bumped to `0.2.0`.
+
+## [0.3.0] — 2026-08-03
+
+Low-note estimator robustness + hands-free scale workflow (Milestone 1):
+
+- Full C1-C7 then F1-F7 auto-advance on real master (`test_play_full_master...`)
+- Pure `estimate_pitch` / `F0Tracker` / dual free-armed PFD
+- Shorter capture (1.1s), high-note onset, sim playhead time, series switch after C7
+- Free comb recognizer still soft-xfails a few F notes (armed workflow is solid)
 
 ## [Unreleased] — 2026-05-22 …
 
