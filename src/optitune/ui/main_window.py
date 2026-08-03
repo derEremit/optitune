@@ -882,19 +882,32 @@ class OptiTuneMainWindow(QMainWindow):
             # on real piano (even with hammer/decay). We still consult PFD for cross-check.
             f_low = float(peak_fs[0])
 
-            # PFD guess: prefer recognized note's ET f0, else last frame / low peak
-            if recognized_midi is not None:
+            # PFD guess priority (strong → weak):
+            # 1. Armed target when recording (prevents partial/octave lock when we
+            #    already know which key the user is playing)
+            # 2. Comb-recognizer identity (free tracking)
+            # 3. Previous-frame continuity
+            if armed is not None:
+                f0_guess = midi_to_hz(armed, a4)
+            elif recognized_midi is not None:
                 f0_guess = midi_to_hz(recognized_midi, a4)
             else:
                 f0_guess = max(self._last_f0_guess, 40.0)
 
             f0_pfd, B = pfd_estimate_f0_b(peak_fs, peak_as, f0_guess=f0_guess, max_n=16)
 
-            # Cross-check: if PFD f0 is within ~35 cents of the lowest peak, trust the
-            # more "theoretically correct" PFD value; otherwise fall back to the reliable low peak.
+            # Cross-check PFD vs lowest peak. When we have a strong prior (armed target
+            # or recognizer) and PFD stayed near it, trust PFD even if the lowest peak
+            # is an upper partial (very common on real bass notes).
+            prior_hz = f0_guess
+            pfd_near_prior = (
+                prior_hz > 20
+                and f0_pfd > 20
+                and abs(1200.0 * np.log2(f0_pfd / prior_hz)) < 80.0
+            )
             if f_low > 20 and f0_pfd > 20:
                 dc = 1200.0 * np.log2(f0_pfd / f_low)
-                f0 = f0_pfd if abs(dc) < 35.0 else f_low
+                f0 = f0_pfd if (abs(dc) < 35.0 or pfd_near_prior) else f_low
             else:
                 f0 = f_low
 
@@ -918,14 +931,26 @@ class OptiTuneMainWindow(QMainWindow):
         # Final tracked frequency (lowest reliable partial or PFD consensus)
         f_est = float(np.clip(f0, 25.0, 5500.0))
 
-        # Map to nearest piano key — prefer comb recognition only when it agrees
-        # with the measured f0 (within a major third). Prevents a wrong high-conf
-        # match from hijacking note ID when the spectrum is ambiguous.
+        # Map to nearest piano key.
+        # 1. If armed and f_est is within scale-mode tolerance of the armed ET f0,
+        #    identity is the armed key (a flat C1 must not snap to B0).
+        # 2. Else prefer comb recognition when it agrees with f0-derived midi.
+        # 3. Else nearest ET key of f_est.
         midi_from_f = round(hz_to_midi(f_est, a4))
-        if recognized_midi is not None and abs(recognized_midi - midi_from_f) <= 4:
+        midi: int
+        if armed is not None and f_est > 20:
+            armed_hz = midi_to_hz(armed, a4)
+            err_to_armed = abs(1200.0 * np.log2(f_est / armed_hz))
+            if err_to_armed <= self.SCALE_MODE_CENT_TOLERANCE:
+                midi = armed
+            elif recognized_midi is not None and abs(recognized_midi - midi_from_f) <= 4:
+                midi = recognized_midi
+            else:
+                midi = int(midi_from_f)
+        elif recognized_midi is not None and abs(recognized_midi - midi_from_f) <= 4:
             midi = recognized_midi
         else:
-            midi = midi_from_f
+            midi = int(midi_from_f)
         midi = max(21, min(108, int(midi)))
 
         target_hz = midi_to_hz(midi, a4)
