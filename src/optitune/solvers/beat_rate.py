@@ -134,16 +134,9 @@ def compute_basic_tuning_curve(
     f0_et = np.array([_et_f0(int(m), a4) for m in all_midis], dtype=float)
 
     if interval_weights is None:
-        interval_weights = {
-            "octave_2_1": 5.5,
-            "octave_4_2": 28.0,  # primary audible octave control (highest weight)
-            "octave_6_3": 8.5,
-            "octave_8_4": 2.2,
-            "fifth_3_2": 0.6,  # light — helps overall coherence without fighting stretch
-            "fourth_4_3": 0.2,
-            "twelfth_3_1": 0.9,
-            "double_oct_4_1": 0.4,
-        }
+        from optitune.solvers.interval_weights import DEFAULT_INTERVAL_WEIGHTS
+
+        interval_weights = dict(DEFAULT_INTERVAL_WEIGHTS)
 
     # 4. Build the list of (i1, i2, a1, a2, w) interval equations
     inter_list: list[dict[str, Any]] = []

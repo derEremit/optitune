@@ -72,7 +72,13 @@ from optitune.solvers import (
     compute_basic_tuning_curve,
     get_solver,
 )
-from optitune.ui.dialogs import DeviceSelectorDialog, NewPianoDialog
+from optitune.solvers.interval_weights import DEFAULT_INTERVAL_WEIGHTS
+from optitune.ui.dialogs import (
+    DeviceSelectorDialog,
+    IntervalWeightsDialog,
+    NewPianoDialog,
+    PitchRaiseDialog,
+)
 from optitune.model.inharmonicity import measured_b_from_piano
 from optitune.ui.widgets import (
     BCurveWidget,
@@ -169,6 +175,7 @@ class OptiTuneMainWindow(QMainWindow):
         self._note_follow_mode: NoteFollowMode = NoteFollowMode.AUTO
         self._follow_locked_midi: int | None = None  # Lock/Stepwise anchor
         self._temperament: str = "equal"
+        self._interval_weights: dict[str, float] = dict(DEFAULT_INTERVAL_WEIGHTS)
         self._prev_level_db: float = -60.0
         self._last_during_cap_check: float = 0.0
         self._curve_status_label: QLabel | None = None
@@ -331,6 +338,14 @@ class OptiTuneMainWindow(QMainWindow):
         compute_action = QAction("Compute Basic Curve", self)
         compute_action.triggered.connect(self._on_compute_curve)
         tune_menu.addAction(compute_action)
+
+        weights_action = QAction("Interval Weights…", self)
+        weights_action.triggered.connect(self._on_interval_weights)
+        tune_menu.addAction(weights_action)
+
+        pitch_raise_action = QAction("Pitch Raise / Overpull…", self)
+        pitch_raise_action.triggered.connect(self._on_pitch_raise)
+        tune_menu.addAction(pitch_raise_action)
 
         clear_action = QAction("Clear Measurements", self)
         clear_action.triggered.connect(self._on_clear_measurements)
@@ -1679,6 +1694,7 @@ class OptiTuneMainWindow(QMainWindow):
                 a4=float(piano.a4),
                 temperament=getattr(self, "_temperament", "equal"),
                 temperament_offsets=temp_offs,
+                interval_weights=getattr(self, "_interval_weights", {}) or {},
             )
             kwargs: dict = {}
             if solver_name == "entropy":
@@ -1757,6 +1773,50 @@ class OptiTuneMainWindow(QMainWindow):
         self.railsback.set_measured_deviations(measured_dev)
         self.railsback.set_a4_marker(True)
         self.b_curve.set_measured_b(measured_b_from_piano(piano))
+
+    @Slot()
+    def _on_interval_weights(self) -> None:
+        dlg = IntervalWeightsDialog(self, weights=self._interval_weights)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._interval_weights = dlg.weights()
+            self.statusBar().showMessage(
+                f"Interval weights updated (4:2={self._interval_weights.get('octave_4_2', 0):.1f}).",
+                3000,
+            )
+
+    @Slot()
+    def _on_pitch_raise(self) -> None:
+        piano = self._ensure_piano()
+        final = piano.tuning_curve
+        if final is None:
+            # Need a final target curve first
+            try:
+                final = BeatRateSolver().solve_piano(piano).as_list()
+            except Exception:
+                final = compute_basic_tuning_curve(piano)
+        # Measured cents vs ET from stored f0
+        measured = np.zeros(88)
+        n_meas = 0
+        for m, k in piano.keys.items():
+            if k.measured_f0 is not None and k.measured_f0 > 1:
+                et = float(piano.a4) * (2.0 ** ((m - 69) / 12.0))
+                measured[m - 21] = float(1200.0 * np.log2(float(k.measured_f0) / et))
+                n_meas += 1
+        mean_flat = None
+        if n_meas == 0:
+            mean_flat = -30.0  # default assumption: ~30¢ flat
+            measured_arg = None
+        else:
+            measured_arg = measured
+        dlg = PitchRaiseDialog(
+            self,
+            final_curve=final,
+            measured_dev=measured_arg,
+            mean_flat_cents=mean_flat,
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        self._apply_tuning_curve(piano, dlg.targets(), solver_name=f"pitch-raise/{dlg.variant()}")
 
     def _on_clear_measurements(self) -> None:
         piano = self._piano

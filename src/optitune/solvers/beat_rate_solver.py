@@ -36,6 +36,9 @@ class BeatRateSolver:
         piano = self._piano_from_b(b_estimates, a4=float(constraints.a4))
         weights = dict(constraints.interval_weights) if constraints.interval_weights else None
         shah_weight = 320.0 if constraints.treble_rule == "1:2" else 0.0
+        # Empty mapping → None so compute uses package defaults
+        if weights is not None and len(weights) == 0:
+            weights = None
         curve_list = compute_basic_tuning_curve(
             piano,
             interval_weights=weights,
