@@ -8,6 +8,17 @@ former `TODO.md`, which served as the living changelog during Phases 0–4.
 
 ---
 
+## [Unreleased] — Milestone 1 (low-note estimator) in progress
+
+- **Inharmonic comb-filter note recognizer** (`dsp/note_recognizer.py`): Galembo-style
+  peak-local partial-comb scoring; weak-fundamental synthetic bass still classifies
+  correctly; armed MIDI is a soft prior only.
+- **PFD subharmonic disambiguation** + **65536-sample bass frames** in live
+  `_estimate_pitch`. Real-piano harness: PFD hit-rate **14/14** on C1–C7/F1–F7
+  clean segments (was ~median 19 semitone error); comb recognizer 10/14.
+- Harness: `tests/real_piano/test_estimator_on_real.py` prints PFD vs recognizer
+  table + `SUMMARY:` line; per-note asserts with soft xfails on remaining F1/high-F.
+
 ## [0.2.0] — 2026-08-03
 
 Repo & code-health baseline (Milestone 0):

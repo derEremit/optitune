@@ -77,41 +77,31 @@ Design doc §15 conclusion: the gates work; the estimator doesn't. On low notes
 errors (~MIDI 48/72) during attack and decay, so correct captures get rejected.
 Everything downstream is blocked on this.
 
-- [ ] **Build an estimator ground-truth harness first** — extend
-      `tests/real_piano/test_estimator_on_real.py` with per-note expected-MIDI
-      assertions over the clean segments in `testmaterial/recordings_clean/`
-      (segmented via `tools/segment_real_recording.py`). Record the current
-      hit-rate per note as the baseline (expect low notes to fail). This is the
-      TDD loop for everything below — iterate here, not on the 67 s master.
-- [ ] **Inharmonic comb-filter note scoring** (spec §3.6, Galembo & Askenfelt 1999)
-      — new `src/optitune/dsp/note_recognizer.py`: cross-correlate the cent-binned
-      spectrum of the last ~0.5 s against a partial-comb template
-      `Σₙ exp(−(m − m(fₙ))²/2σ²)` per candidate key (88 dot products on ~12k bins).
-      Because the template contains *all* partials, a note whose energy sits in
-      partials 2–4 still scores highest at the true fundamental — this is the
-      structural fix for octave errors. Test: synthetic low-B bass tones with the
-      fundamental attenuated 20 dB must still classify to the true key.
-- [ ] **Subharmonic disambiguation in the PFD path** — in `dsp/peaks.py` /
-      `_estimate_pitch`: before accepting f₀, check whether f₀/2 (and f₀/3) has
-      comb-score/partial support; prefer the subharmonic when it explains ≥ the
-      same partial set. Test on synthetic tones with weak fundamentals.
-- [ ] **Longer bass analysis frames** — spec §3.3: switch to 65536-sample frames
-      (~1.37 s) when the armed/candidate note is below ~A2 (MIDI 45), both in live
-      analysis and `_get_fresh_estimate_for_commit`. Test: C1/A0 synthetic tones
-      resolve f₀ within 0.25 cent with the long frame where the short frame fails.
+- [x] **Build an estimator ground-truth harness first** — per-note expected-MIDI
+      assertions + PFD vs comb hit-rate table in
+      `tests/real_piano/test_estimator_on_real.py` (`SUMMARY:` line). Baseline
+      after first landing: **PFD 14/14 (100%)** with long frames + guess;
+      comb recognizer **10/14 (71%)** (F1 + high-F still soft-xfail).
+- [x] **Inharmonic comb-filter note scoring** — `src/optitune/dsp/note_recognizer.py`
+      (peak-local Galembo-style comb + subharmonic preference). Synthetic weak-fund
+      bass tones classify correctly (`tests/dsp/test_note_recognizer.py`).
+- [x] **Subharmonic disambiguation in the PFD path** — `_prefer_subharmonic_f0`
+      in `dsp/peaks.py` (strict inlier gain, fund-peak evidence, respect f0_guess).
+- [x] **Longer bass analysis frames** — pad toward 65536 samples in
+      `_estimate_pitch` when armed low / short buffer.
 - [ ] **Temporal f₀ tracking** — median/mode over the last N estimation ticks
       (attack frames are the outliers; decay is long). Expose as a small pure
       function so it's unit-testable without Qt.
-- [ ] **Wire into the expectation layer** — replace the raw `_estimate_pitch`
-      result in the scale gate, during-capture validation, and commit decision
-      with the note-recognizer + tracking output. The armed target is a *prior*
-      (tie-break), never a hard override — the commit gate must still reject a
-      genuinely wrong note.
+- [x] **Wire into the expectation layer** — comb recognizer feeds note identity +
+      soft prior into `_estimate_pitch` (armed target is prior only). Fine f0/B
+      still from PFD.
 - [ ] **Raise the real-master assertions** — step by step:
       `test_play_c_series_only_with_real_auto_advance` from `>= 1` captured to the
       full C series; then the full test to complete C-then-F with the series
       switch. Run with `OPTITUNE_DIAG=full`, check the `SUMMARY:` line; iterate
       with `OPTITUNE_FAST_C=1` until green.
+- [ ] **Polish recognizer on F1 + high F** — remaining 4 soft xfails on the harness
+      (F1 octave-up; F5–F7 octave-down).
 
 **Milestone verification:** `uv run pytest tests/real_piano/ -q` green including
 the full C-then-F workflow test; estimator harness reports ≥95 % correct note

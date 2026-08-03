@@ -14,6 +14,12 @@ from .binning import (
     bin_spectrum_vectorized,
     slow_bin_spectrum,
 )
+from .note_recognizer import (
+    NoteMatch,
+    recognize_from_audio,
+    recognize_note,
+    spectrum_from_audio,
+)
 from .peaks import (
     cents,
     find_spectral_peaks,
@@ -35,6 +41,7 @@ __all__ = [
     "F_HI",
     "F_LO",
     "N_BINS",
+    "NoteMatch",
     "a_weight_db",
     "apply_a_weight_to_binned",
     "bin_and_a_weight",
@@ -54,5 +61,8 @@ __all__ = [
     "parabolic_interpolation",
     "perfect_tone",
     "pfd_estimate_f0_b",
+    "recognize_from_audio",
+    "recognize_note",
     "slow_bin_spectrum",
+    "spectrum_from_audio",
 ]

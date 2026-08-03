@@ -47,6 +47,7 @@ from optitune.dsp import (
     midi_to_hz,
     midi_to_note_name,
     pfd_estimate_f0_b,
+    recognize_note,
 )
 from optitune.model import Key, Piano
 from optitune.recording.auto_record import (
@@ -818,14 +819,30 @@ class OptiTuneMainWindow(QMainWindow):
 
     def _estimate_pitch(self, audio: np.ndarray, fs: float, a4: float) -> dict:
         """
-        Core Phase 3/4 estimator using the exact Phase 1 toolkit.
+        Core Phase 3/4 estimator using the exact Phase 1 toolkit + comb note ID.
 
         Returns dict with f_est, midi, target_hz (ET), cents (ET), delta_hz (ET), f0, b (inharmonicity).
         Target/cents/delta are later adjusted in _run_live_analysis when a curve is active.
+
+        Note identity comes from the inharmonic comb-filter recognizer when confident;
+        fine f0/B still come from PFD. The armed target is only a soft prior.
         """
         n = len(audio)
         if n < 256:
             return self._fallback_estimate(audio, fs, a4)
+
+        # Longer frames for bass candidates improve low-f0 resolution (spec §3.3).
+        # Pad toward 65536 samples (~1.37 s @ 48 kHz) without truncating longer buffers.
+        analysis = np.asarray(audio, dtype=np.float64)
+        target_n = 65536 if n < 65536 else n
+        # Only force the long frame when we might be looking at bass (armed low, or short buffer)
+        armed = self._record_selected_midi
+        want_long = n < 65536 and (armed is None or armed < 55 or n < 24000)
+        if want_long and n < target_n:
+            pad = np.zeros(target_n, dtype=np.float64)
+            pad[:n] = analysis
+            analysis = pad
+            n = target_n
 
         # Window (Blackman-Harris is best but heavy; hann + our parabolic is excellent)
         try:
@@ -833,7 +850,7 @@ class OptiTuneMainWindow(QMainWindow):
         except Exception:
             w = np.hanning(n)
 
-        spec = np.fft.rfft(audio * w)
+        spec = np.fft.rfft(analysis * w)
         power = np.abs(spec) ** 2
         freqs = np.fft.rfftfreq(n, 1.0 / fs)
 
@@ -843,6 +860,18 @@ class OptiTuneMainWindow(QMainWindow):
         f0 = 440.0
         B = 0.0003
         f_dom = 440.0
+        recognized_midi: int | None = None
+
+        # Comb-filter note identity (soft prior = armed target when present)
+        if len(peak_fs) >= 2:
+            match = recognize_note(
+                peak_fs=peak_fs,
+                peak_as=peak_as,
+                a4=a4,
+                prior_midi=armed,
+            )
+            if match is not None and match.confidence >= 0.52:
+                recognized_midi = match.midi
 
         if len(peak_fs) >= 1:
             # Dominant visual peak (for spectrum marker)
@@ -853,10 +882,13 @@ class OptiTuneMainWindow(QMainWindow):
             # on real piano (even with hammer/decay). We still consult PFD for cross-check.
             f_low = float(peak_fs[0])
 
-            # Run PFD (gives great B and refined f0 when guess is reasonable)
-            f0_pfd, B = pfd_estimate_f0_b(
-                peak_fs, peak_as, f0_guess=max(self._last_f0_guess, 80.0), max_n=16
-            )
+            # PFD guess: prefer recognized note's ET f0, else last frame / low peak
+            if recognized_midi is not None:
+                f0_guess = midi_to_hz(recognized_midi, a4)
+            else:
+                f0_guess = max(self._last_f0_guess, 40.0)
+
+            f0_pfd, B = pfd_estimate_f0_b(peak_fs, peak_as, f0_guess=f0_guess, max_n=16)
 
             # Cross-check: if PFD f0 is within ~35 cents of the lowest peak, trust the
             # more "theoretically correct" PFD value; otherwise fall back to the reliable low peak.
@@ -866,6 +898,19 @@ class OptiTuneMainWindow(QMainWindow):
             else:
                 f0 = f_low
 
+            # If the comb recognizer is confident and PFD landed an octave away,
+            # fold f0 by exact octaves toward the recognized fundamental (keep measured
+            # cents; do not replace f0 with ET of the recognized key).
+            if recognized_midi is not None and f0 > 20:
+                target_f = midi_to_hz(recognized_midi, a4)
+                if target_f > 20:
+                    nearest_oct = round(float(np.log2(f0 / target_f)))
+                    if nearest_oct != 0 and abs(nearest_oct) <= 2:
+                        folded = f0 / (2.0**nearest_oct)
+                        # Only fold when the folded value sits near the recognized ET f0
+                        if abs(1200.0 * np.log2(folded / target_f)) < 100.0:
+                            f0 = folded
+
             # Final sanity
             if not (25 < f0 < 5500):
                 f0 = f_dom if 25 < f_dom < 5500 else self._last_f0_guess
@@ -873,10 +918,15 @@ class OptiTuneMainWindow(QMainWindow):
         # Final tracked frequency (lowest reliable partial or PFD consensus)
         f_est = float(np.clip(f0, 25.0, 5500.0))
 
-        # Map to nearest piano key using current A4 (ET for the estimator itself)
-        midi_f = hz_to_midi(f_est, a4)
-        midi = round(midi_f)
-        midi = max(21, min(108, midi))
+        # Map to nearest piano key — prefer comb recognition only when it agrees
+        # with the measured f0 (within a major third). Prevents a wrong high-conf
+        # match from hijacking note ID when the spectrum is ambiguous.
+        midi_from_f = round(hz_to_midi(f_est, a4))
+        if recognized_midi is not None and abs(recognized_midi - midi_from_f) <= 4:
+            midi = recognized_midi
+        else:
+            midi = midi_from_f
+        midi = max(21, min(108, int(midi)))
 
         target_hz = midi_to_hz(midi, a4)
         if target_hz <= 0:

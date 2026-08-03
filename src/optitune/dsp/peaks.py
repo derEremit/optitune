@@ -189,4 +189,85 @@ def pfd_estimate_f0_b(
                 best_f0 = cand
                 _, best_B = _fit_f0_b_linear(np.array([1.0, 2.0]), np.array([cand, 2 * cand]))
 
+    # Subharmonic disambiguation: if f0/2 (or f0/3) explains more partials,
+    # prefer the lower fundamental (classic weak-fundamental / octave error fix).
+    # Skipped when f0_guess already anchors us near the correct octave.
+    best_f0, best_B = _prefer_subharmonic_f0(best_f0, best_B, pf, max_n, f0_guess=f0_guess)
+
+    return best_f0, best_B
+
+
+def _count_partial_inliers(
+    f0: float, B: float, peak_freqs: np.ndarray, max_n: int, tol_cents: float = 30.0
+) -> int:
+    """How many peaks sit within tol_cents of some partial of (f0, B)."""
+    if f0 <= 0:
+        return 0
+    count = 0
+    for f in peak_freqs:
+        if f < 18 or f > 14000:
+            continue
+        n = round(f / f0)
+        if not (1 <= n <= max_n):
+            continue
+        model = n * f0 * float(np.sqrt(1.0 + B * n * n))
+        if model > 0 and abs(cents(float(f), model)) < tol_cents:
+            count += 1
+    return count
+
+
+def _prefer_subharmonic_f0(
+    f0: float,
+    B: float,
+    peak_freqs: np.ndarray,
+    max_n: int,
+    f0_guess: float | None = None,
+) -> tuple[float, float]:
+    """
+    Prefer f0/2 or f0/3 when they strictly explain more partials.
+
+    Guards:
+    - Do not walk away from a good f0_guess (within ~80 ¢).
+    - Require a peak near the candidate subharmonic (or very low bass < 90 Hz
+      where fundamentals are often weak).
+    - Require strictly more inliers than the current f0 (not ≥).
+    """
+    best_f0, best_B = float(f0), float(B)
+
+    if f0_guess is not None and abs(cents(best_f0, f0_guess)) < 80:
+        return best_f0, best_B
+
+    best_inliers = _count_partial_inliers(best_f0, best_B, peak_freqs, max_n)
+
+    for div in (2, 3):
+        f_sub = best_f0 / div
+        if f_sub < 22.0:
+            continue
+        # Evidence of the lower fundamental (peak nearby), unless bass-weak-fund
+        has_fund_peak = any(f > 18 and abs(cents(float(f), f_sub)) < 50.0 for f in peak_freqs)
+        if not has_fund_peak and f_sub > 90.0:
+            continue
+
+        ns_list: list[float] = []
+        fms_list: list[float] = []
+        for f in peak_freqs:
+            if f < 18 or f > 14000:
+                continue
+            n = round(f / f_sub)
+            if 1 <= n <= max_n:
+                ns_list.append(float(n))
+                fms_list.append(float(f))
+        if len(ns_list) < 2:
+            continue
+        f0_fit, B_fit = _fit_f0_b_linear(np.array(ns_list), np.array(fms_list))
+        if abs(cents(f0_fit, f_sub)) > 80:
+            continue
+        # Prefer sub only if closer to guess (when present) or clearly more inliers
+        if f0_guess is not None and abs(cents(f0_fit, f0_guess)) >= abs(cents(best_f0, f0_guess)):
+            continue
+        inliers = _count_partial_inliers(f0_fit, B_fit, peak_freqs, max_n)
+        if inliers > best_inliers:
+            best_f0, best_B = f0_fit, B_fit
+            best_inliers = inliers
+
     return best_f0, best_B
