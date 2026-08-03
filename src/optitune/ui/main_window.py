@@ -73,9 +73,12 @@ from optitune.solvers import (
     get_solver,
 )
 from optitune.ui.dialogs import DeviceSelectorDialog
+from optitune.model.inharmonicity import measured_b_from_piano
 from optitune.ui.widgets import (
+    BCurveWidget,
     CentsDisplay,
     KeyboardWidget,
+    RailsbackWidget,
     SpectrumWidget,
     StrobeWidget,
 )
@@ -165,6 +168,7 @@ class OptiTuneMainWindow(QMainWindow):
         self._last_recorded_midi: int | None = None
         self._note_follow_mode: NoteFollowMode = NoteFollowMode.AUTO
         self._follow_locked_midi: int | None = None  # Lock/Stepwise anchor
+        self._temperament: str = "equal"
         self._prev_level_db: float = -60.0
         self._last_during_cap_check: float = 0.0
         self._curve_status_label: QLabel | None = None
@@ -177,6 +181,7 @@ class OptiTuneMainWindow(QMainWindow):
 
         # Try to restore previous piano session (measurements + curve)
         self._load_persisted_piano()
+        self._refresh_curve_widgets()
         # Resume scale series if the previous session was interrupted mid-arm
         self._restore_scale_session_settings()
 
@@ -245,11 +250,23 @@ class OptiTuneMainWindow(QMainWindow):
         top_row.setSizes([380, 320])
         layout.addWidget(top_row, 3)
 
-        # Spectrum (now real pyqtgraph)
+        # Spectrum + curve graphs (Railsback + B)
+        mid_row = QSplitter(Qt.Orientation.Horizontal)
         self.spectrum = SpectrumWidget()
-        layout.addWidget(self.spectrum, 2)
+        curve_col = QWidget()
+        curve_layout = QVBoxLayout(curve_col)
+        curve_layout.setContentsMargins(0, 0, 0, 0)
+        curve_layout.setSpacing(4)
+        self.railsback = RailsbackWidget()
+        self.b_curve = BCurveWidget()
+        curve_layout.addWidget(self.railsback, 1)
+        curve_layout.addWidget(self.b_curve, 1)
+        mid_row.addWidget(self.spectrum)
+        mid_row.addWidget(curve_col)
+        mid_row.setSizes([480, 420])
+        layout.addWidget(mid_row, 3)
 
-        # Keyboard (now highlights detected note + supports measured states for recording)
+        # Keyboard (highlights detected note + measured states for recording)
         self.keyboard = KeyboardWidget()
         layout.addWidget(self.keyboard, 1)
 
@@ -1043,6 +1060,7 @@ class OptiTuneMainWindow(QMainWindow):
 
         self._record_selected_midi = midi
         self._update_curve_status()
+        self._refresh_curve_widgets()
         self.statusBar().showMessage(
             f"Recorded MIDI {midi} ({midi_to_note_name(midi)})  f0≈{f0:.1f} Hz  B={b:.6f}",
             4000,
@@ -1649,7 +1667,19 @@ class OptiTuneMainWindow(QMainWindow):
                 )
                 return
 
-            constraints = TuningConstraints(a4=float(piano.a4))
+            from optitune.model.temperaments import temperament_offsets_88
+
+            temp_offs = None
+            if getattr(self, "_temperament", "equal") not in (None, "equal", "et"):
+                try:
+                    temp_offs = temperament_offsets_88(self._temperament)
+                except KeyError:
+                    temp_offs = None
+            constraints = TuningConstraints(
+                a4=float(piano.a4),
+                temperament=getattr(self, "_temperament", "equal"),
+                temperament_offsets=temp_offs,
+            )
             kwargs: dict = {}
             if solver_name == "entropy":
                 kwargs = {"seed": 0, "max_passes": 12, "railsback_prior": 0.2}
@@ -1691,6 +1721,7 @@ class OptiTuneMainWindow(QMainWindow):
         for k in piano.keys.values():
             k.target_offset_cents = piano.get_target_offset(k.midi)
         self._update_curve_status()
+        self._refresh_curve_widgets()
         self.statusBar().showMessage(
             f"Curve computed ({solver_name}). Green ≈ on target, orange needs attention. "
             "Tune until the strobe stops and cents near 0.",
@@ -1704,6 +1735,29 @@ class OptiTuneMainWindow(QMainWindow):
             if abs(piano.get_target_offset(m)) > 4.0:
                 self.keyboard.set_key_state(m, KeyState.NEEDS_ATTENTION)
 
+    def _refresh_curve_widgets(self) -> None:
+        """Push piano curve + B measurements into Railsback / B-curve plots."""
+        if not hasattr(self, "railsback") or not hasattr(self, "b_curve"):
+            return
+        piano = self._piano
+        if piano is None:
+            self.railsback.clear()
+            self.b_curve.clear()
+            return
+        if piano.tuning_curve is not None:
+            self.railsback.set_tuning_curve(piano.tuning_curve)
+        # Measured cents vs ET: if we have f0, convert; else use stored target offset as proxy
+        measured_dev: dict[int, float] = {}
+        for m, k in piano.keys.items():
+            if k.measured_f0 is not None and k.measured_f0 > 1:
+                et = float(self._initial_a4) * (2.0 ** ((m - 69) / 12.0))
+                measured_dev[m] = float(1200.0 * np.log2(float(k.measured_f0) / et))
+            elif k.target_offset_cents:
+                measured_dev[m] = float(k.target_offset_cents)
+        self.railsback.set_measured_deviations(measured_dev)
+        self.railsback.set_a4_marker(True)
+        self.b_curve.set_measured_b(measured_b_from_piano(piano))
+
     def _on_clear_measurements(self) -> None:
         piano = self._piano
         if piano is None:
@@ -1713,6 +1767,7 @@ class OptiTuneMainWindow(QMainWindow):
         self.keyboard.clear_all()
         self._record_selected_midi = None
         self._update_curve_status()
+        self._refresh_curve_widgets()
         self.statusBar().showMessage("Measurements and curve cleared.", 2000)
         self._save_persisted_piano()
 
@@ -1837,12 +1892,32 @@ class OptiTuneMainWindow(QMainWindow):
 
     @Slot()
     def _on_new_piano(self) -> None:
-        """Phase 4: start fresh recording session."""
-        self._piano = None
+        """Start a fresh piano session (name, A4, temperament)."""
+        dlg = NewPianoDialog(
+            self,
+            name="My Piano",
+            a4=self._initial_a4,
+            temperament=self._temperament,
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        self._initial_a4 = dlg.a4()
+        self._temperament = dlg.temperament()
+        self._piano = Piano(a4=self._initial_a4, name=dlg.piano_name())
         self._record_selected_midi = None
+        self._last_recorded_midi = None
+        self._scale_session.exit_scale()
+        self._clear_scale_session_settings()
         self.keyboard.clear_all()
+        if hasattr(self, "_a4_label") and self._a4_label is not None:
+            self._a4_label.setText(f"  A4 = {self._initial_a4:.1f} Hz")
         self._update_curve_status()
-        self.statusBar().showMessage("New piano session started. Begin recording keys.", 3000)
+        self._refresh_curve_widgets()
+        self.statusBar().showMessage(
+            f"New piano “{dlg.piano_name()}” A4={self._initial_a4:.1f} "
+            f"({self._temperament}). Begin recording keys.",
+            4000,
+        )
         self._save_persisted_piano()
 
     @Slot()

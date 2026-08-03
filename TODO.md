@@ -198,19 +198,18 @@ and pitch-raise wizard still open before full `0.5.0`.
 
 ## Milestone 4 — Visualization & tuning-session UX (target: `0.6.0`)
 
-- [ ] **Tuning-curve (Railsback) widget** — `ui/widgets/railsback_widget.py`
-      (pyqtgraph): computed curve, per-key measured deviations, A4 marker; live
-      updates from streaming solver. pytest-qt smoke + data-binding test.
-- [ ] **B-curve widget** — `ui/widgets/b_curve_widget.py`: log-B vs MIDI scatter
-      of measured keys + fitted 2-segment curve (fit already in `beat_rate.py` —
-      extract to `model/inharmonicity.py` for reuse).
-- [ ] **Temperament picker dialog** — `ui/dialogs/temperament_picker.py` listing
-      `temperaments.py` entries with cent-offset preview; persists via QSettings.
+- [x] **Tuning-curve (Railsback) widget** — `ui/widgets/railsback_widget.py`
+      (pyqtgraph): curve + measured deviations + A4 marker; refreshed on
+      record/compute/load. pytest-qt.
+- [x] **B-curve widget** — `ui/widgets/b_curve_widget.py` +
+      `model/inharmonicity.fit_log_linear_b`; log-B scatter + fit. Side-by-side
+      with spectrum in main window.
+- [x] **A4 + piano metadata + temperament** — `dialogs/new_piano.py` (name, A4
+      415–466, temperament combo); layered into `TuningConstraints` on compute.
+      Standalone temperament-preview dialog / QSettings persist optional later.
 - [ ] **Interval-weight editor** — power-user dialog editing the weight dict the
       beat-rate solver already accepts; presets ("clean octaves", "singing
       twelfths", default).
-- [ ] **A4 + piano metadata UI** — New Piano dialog: name, A4 (float box,
-      415–466), temperament; wire to existing `--a4` plumbing.
 - [ ] **Tuning-mode polish** — per-partial strobe rings option (spec §3.7),
       target-vs-measured cents needle behavior verified against synthetic tones
       end-to-end (generator → capture sim → display state).
