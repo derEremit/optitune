@@ -1610,10 +1610,9 @@ class OptiTuneMainWindow(QMainWindow):
             return None
 
     def _on_compute_curve(self) -> None:
-        """Run the minimal solver and wire the resulting curve into the live tuner immediately."""
+        """Run the selected solver (optionally on a worker thread) and apply the curve."""
         piano = self._ensure_piano()
         if not piano.has_measurements():
-            # Still allow default curve for demo / "ET + simple stretch"
             QMessageBox.information(
                 self,
                 "Compute Curve",
@@ -1621,68 +1620,89 @@ class OptiTuneMainWindow(QMainWindow):
                 "For best results on your real piano, record 8-12 keys first (B values drive the fit).",
             )
 
+        solver_name = "beat-rate"
+        if hasattr(self, "_solver_combo") and self._solver_combo is not None:
+            data = self._solver_combo.currentData()
+            if data:
+                solver_name = str(data)
+
         try:
-            solver_name = "beat-rate"
-            if hasattr(self, "_solver_combo") and self._solver_combo is not None:
-                data = self._solver_combo.currentData()
-                if data:
-                    solver_name = str(data)
-            curve: list[float]
+            import numpy as np
+
+            from optitune.solvers.base import MIDI_LOW, N_KEYS
+            from optitune.solvers.worker import SolverWorker
+
+            spectra = piano.cent_spectra_matrix().astype(float)
+            b_est = np.full(N_KEYS, np.nan, dtype=float)
+            for m, k in piano.keys.items():
+                if k.measured_b is not None:
+                    b_est[int(m) - MIDI_LOW] = float(k.measured_b)
+
+            needs_spectra = solver_name in ("entropy", "octave-entropy")
+            if needs_spectra and float(spectra.sum()) <= 0:
+                QMessageBox.information(
+                    self,
+                    "Spectrum solver",
+                    "No cent spectra stored yet. Record notes first "
+                    "(spectra are captured automatically on Record), "
+                    "or switch to beat-rate.",
+                )
+                return
+
+            constraints = TuningConstraints(a4=float(piano.a4))
+            kwargs: dict = {}
             if solver_name == "entropy":
-                spectra = piano.cent_spectra_matrix()
-                if float(spectra.sum()) <= 0:
-                    QMessageBox.information(
-                        self,
-                        "Entropy solver",
-                        "No cent spectra stored yet. Record notes first "
-                        "(spectra are captured automatically on Record), "
-                        "or switch to beat-rate.",
-                    )
-                    return
-                import numpy as np
+                kwargs = {"seed": 0, "max_passes": 12, "railsback_prior": 0.2}
 
-                from optitune.solvers.base import MIDI_LOW, N_KEYS
+            # Run worker synchronously via direct call for reliability in tests;
+            # still uses SolverWorker API so intermediate progress can stream later.
+            worker = SolverWorker()
+            result: list = []
 
-                b_est = np.full(N_KEYS, np.nan, dtype=float)
-                for m, k in piano.keys.items():
-                    if k.measured_b is not None:
-                        b_est[int(m) - MIDI_LOW] = float(k.measured_b)
-                solver = get_solver("entropy", seed=0, max_passes=12, railsback_prior=0.2)
-                tc = list(
-                    solver.solve(spectra.astype(float), b_est, TuningConstraints(a4=piano.a4))
-                )[-1]
-                curve = tc.as_list()
-            else:
-                try:
+            def _on_done(tc: object) -> None:
+                result.append(tc)
+
+            worker.finished.connect(_on_done)
+            worker.failed.connect(lambda msg: result.append(RuntimeError(msg)))
+            worker.start_solve(solver_name, spectra, b_est, constraints, kwargs)
+
+            if not result:
+                # Fallback sync path
+                if solver_name == "beat-rate":
                     curve = BeatRateSolver().solve_piano(piano).as_list()
-                except Exception:
-                    curve = compute_basic_tuning_curve(piano)
-            piano.tuning_curve = curve
-            # Also push offsets back into any recorded Key objects
-            for k in piano.keys.values():
-                k.target_offset_cents = piano.get_target_offset(k.midi)
+                else:
+                    solver = get_solver(solver_name, **kwargs)
+                    curve = list(solver.solve(spectra, b_est, constraints))[-1].as_list()
+            elif isinstance(result[0], Exception):
+                raise result[0]
+            elif result[0] is None:
+                curve = compute_basic_tuning_curve(piano)
+            else:
+                curve = result[0].as_list()
 
-            self._update_curve_status()
-            self.statusBar().showMessage(
-                "Curve computed. Colors: Green = close to your target, Orange = needs attention (far from target), Blue = measured. "
-                "Tune until the strobe stops and cents are near 0.",
-                8000,
-            )
-
-            # Give immediate visual confirmation
-            self.hint.setText(
-                "Curve active - play a note. The tuner now shows deviation from the computed per-key targets."
-            )
-
-            self._save_persisted_piano()
-
-            # Optional: mark a few keys visually as "needs attention" if they deviate a lot (demo)
-            for m in [21, 33, 45, 57, 69, 81, 93, 105]:
-                if abs(piano.get_target_offset(m)) > 4.0:
-                    self.keyboard.set_key_state(m, KeyState.NEEDS_ATTENTION)
-
+            self._apply_tuning_curve(piano, curve, solver_name=solver_name)
         except Exception as exc:
             QMessageBox.warning(self, "Solver Error", f"Curve computation failed:\n{exc}")
+
+    def _apply_tuning_curve(
+        self, piano: Piano, curve: list[float], *, solver_name: str = "beat-rate"
+    ) -> None:
+        piano.tuning_curve = curve
+        for k in piano.keys.values():
+            k.target_offset_cents = piano.get_target_offset(k.midi)
+        self._update_curve_status()
+        self.statusBar().showMessage(
+            f"Curve computed ({solver_name}). Green ≈ on target, orange needs attention. "
+            "Tune until the strobe stops and cents near 0.",
+            8000,
+        )
+        self.hint.setText(
+            "Curve active - play a note. The tuner now shows deviation from the computed per-key targets."
+        )
+        self._save_persisted_piano()
+        for m in [21, 33, 45, 57, 69, 81, 93, 105]:
+            if abs(piano.get_target_offset(m)) > 4.0:
+                self.keyboard.set_key_state(m, KeyState.NEEDS_ATTENTION)
 
     def _on_clear_measurements(self) -> None:
         piano = self._piano

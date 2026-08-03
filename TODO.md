@@ -177,9 +177,10 @@ entropy and friends are not started.
 - [x] **Temperaments** — `model/temperaments.py`: ET, Werckmeister III,
       Kirnberger III, Vallotti, Young, ¼-comma meantone. 12-class + 88-key
       tables; `TuningConstraints.temperament_offsets` layered on beat-rate.
-- [ ] **Solver worker thread** — `QThread` (spec §4.1) consuming the
-      `Iterator[TuningCurve]`, streaming intermediate curves to the GUI,
-      cancellable. `_on_compute_curve` grows a solver picker (beat-rate default).
+- [x] **Solver worker + picker** — `solvers/worker.py` (`SolverWorker` with
+      progress/finished/failed signals, cancellable). Toolbar Solver combo
+      (beat-rate | entropy | octave-entropy); `_on_compute_curve` uses the
+      worker API. Full QThread host helper `run_solver_in_thread` available.
 - [ ] **NMF B-estimator (deep analysis)** — `src/optitune/solvers/nmf_b_estimator.py`
       porting beiciliang/estimate-f0-inharmonicity (spec §2.5 parameters).
       Offline "Deep analyze note" action. Test: on the 4 extreme synthetic-matrix
