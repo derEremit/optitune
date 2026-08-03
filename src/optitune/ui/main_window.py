@@ -65,7 +65,7 @@ from optitune.recording.scale_session import (
     ScaleSession,
     pitch_class_matches,
 )
-from optitune.solvers import compute_basic_tuning_curve
+from optitune.solvers import BeatRateSolver, compute_basic_tuning_curve
 from optitune.ui.dialogs import DeviceSelectorDialog
 from optitune.ui.widgets import (
     CentsDisplay,

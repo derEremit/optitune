@@ -160,12 +160,10 @@ session: arm C1, play a scale, watch auto-advance + indicator + rejection flash.
 The spec's core differentiator: user-swappable solvers. Beat-rate LS is done;
 entropy and friends are not started.
 
-- [ ] **`Solver` protocol** — `src/optitune/solvers/base.py` exactly per spec
-      §4.3: `solve(cent_spectra (K,M), b_estimates (K,), constraints) →
-      Iterator[TuningCurve]`; `TuningConstraints` (A4, temperament, locked notes,
-      interval weights, treble rule), `TuningCurve` ((88,) cent offsets + metadata).
-      Retro-fit `beat_rate.py` behind it (thin adapter; keep the existing
-      function API for current call sites/tests).
+- [x] **`Solver` protocol** — `solvers/base.py`: `TuningConstraints`,
+      `TuningCurve`, `Solver` protocol per spec §4.3. `BeatRateSolver` adapter
+      yields one final curve matching `compute_basic_tuning_curve`; GUI uses
+      `solve_piano`. Function API kept for existing tests.
 - [ ] **Per-key cent spectra storage** — the entropy solver needs the A-weighted
       cent-binned SPLA per key (spec §2.3 step 3–4). Add `cent_spectrum` to
       `model/key.py`, populate it during capture commit, include in JSON
