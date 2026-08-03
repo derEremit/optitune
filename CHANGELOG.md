@@ -8,6 +8,20 @@ former `TODO.md`, which served as the living changelog during Phases 0–4.
 
 ---
 
+## [0.5.0] — 2026-08-03
+
+Solver suite + visualization + persistence (Milestones 3–5, partial):
+
+- **Solvers**: `Solver` protocol, BeatRateSolver, EntropySolver, OctaveEntropySolver,
+  temperaments, interval-weight presets/editor, pitch-raise math + wizard,
+  SolverWorker API, toolbar solver picker.
+- **Spectra**: per-key A-weighted cent spectra on Record (entropy input).
+- **UI**: Railsback + B-curve graphs, New Piano (name/A4/temperament), Follow modes
+  (already in 0.4), series indicator / rejection flash.
+- **Persistence**: `.pfg` open/save, minimal EPT import, `AppSettings` facade;
+  JSON remains crash autosave.
+- Still open for full M3/M6/M7: NMF deep B, analysis QThread, packaging, docs.
+
 ## [0.4.0] — 2026-08-03
 
 Hands-free workflow productization (Milestone 2):

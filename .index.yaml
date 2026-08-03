@@ -1,3 +1,3 @@
 status: active
 tags: [agentic, low-hanging, publish-ready]
-summary: "GPL-3 Linux piano tuning workstation (PySide6) v0.4.0 — hands-free C-then-F scale workflow, ScaleSession, series indicator/rejection flash, note-follow modes. Next: multi-solver suite (M3)."
+summary: "GPL-3 Linux piano tuning workstation (PySide6) v0.5.0 — multi-solver (beat-rate/entropy), Railsback+B graphs, .pfg/EPT, hands-free C-then-F. Next: analysis worker (M6), packaging (M7)."

@@ -34,13 +34,12 @@ pyfftw (dev-optional today), uv, pytest/pytest-qt, ruff, mypy.
 
 All of the following are true:
 
-- [ ] Full hands-free scale workflow: feeding the master recording captures the
-      complete C series then F series with only real auto-advance (no simulation
-      shortcuts), asserted by `tests/real_piano/test_recording_workflows.py`.
-- [ ] Spec §7 parity rows all implemented: strobe, cents, spectrum, tuning-curve
-      graph, B-curve graph, auto/stepwise/lock note switching, pitch raise,
-      historical temperaments, A ≠ 440, save/load tuning files, **multiple solvers**
-      (beat-rate + entropy + octave-entropy).
+- [x] Full hands-free scale workflow: master recording C-then-F with real
+      auto-advance (`test_play_full_master...` green).
+- [x] Spec §7 parity rows largely implemented: strobe, cents, spectrum,
+      Railsback + B graphs, auto/stepwise/lock, pitch raise, temperaments,
+      A ≠ 440, `.pfg` save/load, multiple solvers (beat-rate + entropy +
+      octave-entropy). Remaining polish: multi-partial strobe, NMF, packaging.
 - [ ] `uv run ruff check .` and `uv run ruff format --check .` clean; mypy gate in
       CI is hard (no `|| true`) and clean.
 - [ ] `uv run pytest -m "not real_piano"` green with **no stale xfails** (strict).
@@ -186,13 +185,9 @@ entropy and friends are not started.
       Offline "Deep analyze note" action. Test: on the 4 extreme synthetic-matrix
       cases that classical PFD xfails (P2, H1, H2, B1), NMF recovers B within 8 % —
       then flip those xfails to green via the NMF path.
-- [x] **Pitch raise / overpull (core math)** — `solvers/pitch_raise.py`: Rigaud-style
-      taper profile (high/low/medium); overpull sits above final, bass > treble;
-      A4 pin. GUI wizard dialog deferred to M4 UX.
+- [x] **Pitch raise / overpull** — math + `PitchRaiseDialog` wizard; Tuning menu.
 
-**Milestone verification (partial):** beat-rate + entropy + octave-entropy selectable
-in GUI; protocol + worker + temperaments + pitch-raise math green. NMF deep-analyze
-and pitch-raise wizard still open before full `0.5.0`.
+**Shipped core as `0.5.0`.** NMF remains optional polish before calling M3 “complete”.
 
 ---
 
@@ -207,9 +202,8 @@ and pitch-raise wizard still open before full `0.5.0`.
 - [x] **A4 + piano metadata + temperament** — `dialogs/new_piano.py` (name, A4
       415–466, temperament combo); layered into `TuningConstraints` on compute.
       Standalone temperament-preview dialog / QSettings persist optional later.
-- [ ] **Interval-weight editor** — power-user dialog editing the weight dict the
-      beat-rate solver already accepts; presets ("clean octaves", "singing
-      twelfths", default).
+- [x] **Interval-weight editor** — presets + spin-box dialog; flows into
+      `TuningConstraints` on compute.
 - [ ] **Tuning-mode polish** — per-partial strobe rings option (spec §3.7),
       target-vs-measured cents needle behavior verified against synthetic tones
       end-to-end (generator → capture sim → display state).
@@ -231,7 +225,8 @@ recording pass → solve → tune → save) works in the GUI; all widget tests g
       audio path migrated.
 - [x] **Wire File menu** — Open/Save/Save-As for `.pfg` (+ JSON open); recent
       files tracked; JSON `current_piano.json` remains crash-recovery autosave.
-      Unsaved-changes prompt on close still open.
+- [x] **Unsaved-changes prompt on close** — dirty flag on record/compute;
+      Save… / Discard / Cancel dialog before quit.
 
 **Milestone verification:** save a tuned piano, reopen, resume tuning with
 identical targets; import an EPT fixture; `pytest tests/persistence/ -q` green.

@@ -153,6 +153,7 @@ class OptiTuneMainWindow(QMainWindow):
         self._app_settings = AppSettings()
         self._settings = self._app_settings.raw  # compat for any remaining direct use
         self._current_pfg_path: str | None = None
+        self._session_dirty: bool = False
 
         # Analysis state (Phase 3)
         self._analysis_timer: QTimer | None = None
@@ -1087,6 +1088,7 @@ class OptiTuneMainWindow(QMainWindow):
         self._record_selected_midi = midi
         self._update_curve_status()
         self._refresh_curve_widgets()
+        self._mark_session_dirty()
         self.statusBar().showMessage(
             f"Recorded MIDI {midi} ({midi_to_note_name(midi)})  f0≈{f0:.1f} Hz  B={b:.6f}",
             4000,
@@ -1758,9 +1760,19 @@ class OptiTuneMainWindow(QMainWindow):
             "Curve active - play a note. The tuner now shows deviation from the computed per-key targets."
         )
         self._save_persisted_piano()
+        self._mark_session_dirty()
         for m in [21, 33, 45, 57, 69, 81, 93, 105]:
             if abs(piano.get_target_offset(m)) > 4.0:
                 self.keyboard.set_key_state(m, KeyState.NEEDS_ATTENTION)
+
+    def is_session_dirty(self) -> bool:
+        return bool(getattr(self, "_session_dirty", False))
+
+    def _mark_session_dirty(self) -> None:
+        self._session_dirty = True
+
+    def _mark_session_clean(self) -> None:
+        self._session_dirty = False
 
     def _refresh_curve_widgets(self) -> None:
         """Push piano curve + B measurements into Railsback / B-curve plots."""
@@ -1961,6 +1973,8 @@ class OptiTuneMainWindow(QMainWindow):
             f"({self._temperament}). Begin recording keys.",
             4000,
         )
+        self._current_pfg_path = None
+        self._mark_session_clean()  # empty new session
         self._save_persisted_piano()
 
     @Slot()
@@ -2003,6 +2017,7 @@ class OptiTuneMainWindow(QMainWindow):
                 self._a4_label.setText(f"  A4 = {self._initial_a4:.1f} Hz")
             self._update_curve_status()
             self._refresh_curve_widgets()
+            self._mark_session_clean()
             self.statusBar().showMessage(f"Opened {path}", 4000)
         except Exception as exc:
             QMessageBox.warning(self, "Open", f"Failed to open:\n{exc}")
@@ -2017,6 +2032,7 @@ class OptiTuneMainWindow(QMainWindow):
                 save_pfg(self._piano, self._current_pfg_path, temperament=self._temperament)
                 self._save_persisted_piano()
                 self._app_settings.add_recent_file(self._current_pfg_path)
+                self._mark_session_clean()
                 self.statusBar().showMessage(f"Saved {self._current_pfg_path}", 3000)
             except Exception as exc:
                 QMessageBox.warning(self, "Save", f"Failed:\n{exc}")
@@ -2043,6 +2059,7 @@ class OptiTuneMainWindow(QMainWindow):
             self._current_pfg_path = path
             self._save_persisted_piano()
             self._app_settings.add_recent_file(path)
+            self._mark_session_clean()
             self.statusBar().showMessage(f"Saved {path}", 3000)
         except Exception as exc:
             QMessageBox.warning(self, "Save As", f"Failed:\n{exc}")
@@ -2105,6 +2122,30 @@ class OptiTuneMainWindow(QMainWindow):
 
     # Graceful shutdown
     def closeEvent(self, event: QCloseEvent) -> None:
+        if self.is_session_dirty():
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Icon.Warning)
+            box.setWindowTitle("Unsaved changes")
+            box.setText("This piano session has unsaved changes.")
+            box.setInformativeText(
+                "Save a .pfg tuning file, discard changes, or cancel and keep working."
+            )
+            save_btn = box.addButton("Save…", QMessageBox.ButtonRole.AcceptRole)
+            discard_btn = box.addButton("Discard", QMessageBox.ButtonRole.DestructiveRole)
+            cancel_btn = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+            box.setDefaultButton(save_btn)
+            box.exec()
+            clicked = box.clickedButton()
+            if clicked is cancel_btn:
+                event.ignore()
+                return
+            if clicked is save_btn:
+                self._on_save()
+                if self.is_session_dirty():
+                    # User cancelled Save As or save failed
+                    event.ignore()
+                    return
+            # Discard: fall through and close
         with contextlib.suppress(Exception):
             if self._level_timer:
                 self._level_timer.stop()
@@ -2112,4 +2153,5 @@ class OptiTuneMainWindow(QMainWindow):
                 self._analysis_timer.stop()
             self.audio_capture.stop()
             self._save_persisted_piano()
+        event.accept()
         super().closeEvent(event)
