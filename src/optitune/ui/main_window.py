@@ -41,6 +41,7 @@ from optitune.audio import (
     resolve_device_index,
 )
 from optitune.dsp import (
+    F0Tracker,
     estimate_pitch,
     hz_to_midi,
     midi_to_hz,
@@ -125,6 +126,7 @@ class OptiTuneMainWindow(QMainWindow):
         self._level_timer: QTimer | None = None
         self._analysis_tick = 0
         self._last_f0_guess: float = 440.0  # for PFD anchoring across frames
+        self._f0_tracker = F0Tracker(window=7)
 
         # Phase 4: model + recording + curve
         self._last_est: dict | None = None
@@ -737,9 +739,25 @@ class OptiTuneMainWindow(QMainWindow):
 
             # --- Real DSP pitch estimation (still ET inside) ---
             est = self._estimate_pitch(audio, fs, a4)
-            f_est = est["f_est"]
-            midi = est["midi"]
-            f0_used = est.get("f0", f_est)
+            f_est = float(est["f_est"])
+            midi = int(est["midi"])
+            f0_used = float(est.get("f0", f_est))
+
+            # Temporal tracking: reject one-off octave/partial spikes
+            tracked = self._f0_tracker.push(f0_used)
+            if (
+                tracked is not None
+                and tracked > 20
+                and abs(1200.0 * np.log2(f_est / tracked)) > 500.0
+            ):
+                f_est = tracked
+                f0_used = tracked
+                midi = round(hz_to_midi(f_est, a4))
+                armed = self._record_selected_midi
+                if armed is not None:
+                    armed_hz = midi_to_hz(armed, a4)
+                    if abs(1200.0 * np.log2(f_est / armed_hz)) <= self.SCALE_MODE_CENT_TOLERANCE:
+                        midi = armed
 
             # Phase 4: re-target using curve if present (this is what makes the final test work)
             target_hz = self._get_target_hz(midi, a4)
@@ -753,6 +771,9 @@ class OptiTuneMainWindow(QMainWindow):
             # Cache for recording workflow
             self._last_est = {
                 **est,
+                "f_est": float(f_est),
+                "f0": float(f0_used),
+                "midi": int(midi),
                 "target_hz": float(target_hz),
                 "cents": float(cents),
                 "delta_hz": float(delta_hz),
@@ -1051,6 +1072,7 @@ class OptiTuneMainWindow(QMainWindow):
 
         if checked:
             self._auto_record_ctrl.arm(target)
+            self._f0_tracker.clear()  # fresh temporal history for this arm
 
             # Layer 1 bootstrap: when the user starts arming a series with auto-advance,
             # immediately enter scale mode for that pitch class. This gives the very first
@@ -1185,6 +1207,7 @@ class OptiTuneMainWindow(QMainWindow):
             # Re-arm the exact same target so the red ARMED state + controller stay alive
             if target is not None:
                 self._auto_record_ctrl.arm(target)
+                self._f0_tracker.clear()
                 self.keyboard.set_key_state(target, KeyState.ARMED)
                 self.keyboard.set_current_key(target)
                 self._apply_auto_record_visual_force()
@@ -1196,6 +1219,7 @@ class OptiTuneMainWindow(QMainWindow):
 
         # === Good capture — proceed with the original commit + advance logic ===
         just_recorded = self._record_selected_midi
+        self._f0_tracker.clear()  # new note after advance will build its own history
         self._on_record_note(visual_feedback=False)
 
         if just_recorded:

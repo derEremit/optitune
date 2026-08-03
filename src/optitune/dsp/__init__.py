@@ -14,6 +14,7 @@ from .binning import (
     bin_spectrum_vectorized,
     slow_bin_spectrum,
 )
+from .f0_tracker import F0Tracker
 from .note_recognizer import (
     NoteMatch,
     recognize_from_audio,
@@ -42,6 +43,7 @@ __all__ = [
     "F_HI",
     "F_LO",
     "N_BINS",
+    "F0Tracker",
     "NoteMatch",
     "a_weight_db",
     "apply_a_weight_to_binned",
