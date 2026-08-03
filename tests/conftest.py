@@ -1,14 +1,12 @@
-"""
-Pytest configuration and shared fixtures for OptiTune.
+"""Pytest defaults for OptiTune.
 
-pytest-qt is auto-discovered via its entry point when installed in the environment.
-No manual registration needed (and declaring the string name can cause import issues
-with the actual top-level module 'pytestqt').
+Force synchronous live analysis in tests so QThread teardown does not race
+widget destruction. Production GUI still uses AnalysisWorker by default.
 """
 
 from __future__ import annotations
 
-# Intentionally empty — all Qt test configuration is handled by pytest-qt plugin
-# and the [tool.pytest.ini_options] section in pyproject.toml (qt_api = "pyside6").
+import os
 
-# Future fixtures (synthetic audio, qtbot helpers, etc.) go here in Phase 1+.
+# Must be set before MainWindow is constructed in any test
+os.environ.setdefault("OPTITUNE_SYNC_ANALYSIS", "1")

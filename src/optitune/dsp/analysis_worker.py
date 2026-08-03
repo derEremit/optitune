@@ -21,6 +21,8 @@ class AnalysisWorker(QObject):
     Process mono float buffers and emit result dicts (same shape as estimate_pitch).
     """
 
+    # GUI → worker (queued when worker lives on another thread)
+    analyze = Signal(object, float)  # audio, fs
     frame_ready = Signal(object)  # dict from estimate_pitch
     failed = Signal(str)
     status = Signal(str)
@@ -33,6 +35,7 @@ class AnalysisWorker(QObject):
         self._follow_mode: NoteFollowMode | str = NoteFollowMode.AUTO
         self._locked_midi: int | None = None
         self._busy = False
+        self.analyze.connect(self.process_buffer)
 
     @Slot(float)
     def set_a4(self, a4: float) -> None:
@@ -41,6 +44,10 @@ class AnalysisWorker(QObject):
     @Slot(object)
     def set_armed_midi(self, midi: object) -> None:
         self._armed_midi = int(midi) if midi is not None else None
+
+    @Slot(float)
+    def set_last_f0(self, f0: float) -> None:
+        self._last_f0 = float(f0)
 
     @Slot(object)
     def set_follow_mode(self, mode: object) -> None:
@@ -52,6 +59,22 @@ class AnalysisWorker(QObject):
     @Slot(object)
     def set_locked_midi(self, midi: object) -> None:
         self._locked_midi = int(midi) if midi is not None else None
+
+    def configure(
+        self,
+        *,
+        a4: float,
+        armed_midi: int | None,
+        last_f0: float,
+        follow_mode: NoteFollowMode | str,
+        locked_midi: int | None,
+    ) -> None:
+        """Update priors (call from GUI thread before analyze.emit when same thread OK)."""
+        self._a4 = float(a4)
+        self._armed_midi = armed_midi
+        self._last_f0 = float(last_f0)
+        self._follow_mode = follow_mode
+        self._locked_midi = locked_midi
 
     @Slot(object, float)
     def process_buffer(self, audio: object, fs: float) -> None:
@@ -89,5 +112,11 @@ def start_analysis_thread(
     thread = QThread(parent)
     worker = AnalysisWorker()
     worker.moveToThread(thread)
+    # Re-bind analyze → process_buffer after move so AutoConnection queues
+    try:
+        worker.analyze.disconnect()
+    except Exception:
+        pass
+    worker.analyze.connect(worker.process_buffer)
     thread.finished.connect(worker.deleteLater)
     return thread, worker
