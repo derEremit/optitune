@@ -17,11 +17,12 @@ import logging
 import os
 
 import numpy as np
-from PySide6.QtCore import QSettings, Qt, QTimer, Slot
+from PySide6.QtCore import Qt, QTimer, Slot
 from PySide6.QtGui import QAction, QCloseEvent, QColor, QPalette
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
+    QFileDialog,
     QLabel,
     QMainWindow,
     QMenuBar,
@@ -80,6 +81,8 @@ from optitune.ui.dialogs import (
     PitchRaiseDialog,
 )
 from optitune.model.inharmonicity import measured_b_from_piano
+from optitune.persistence.settings import AppSettings
+from optitune.persistence.tuning_file import load_pfg, save_pfg
 from optitune.ui.widgets import (
     BCurveWidget,
     CentsDisplay,
@@ -146,7 +149,9 @@ class OptiTuneMainWindow(QMainWindow):
         self.ringbuffer = RingBuffer(max_samples=192_000)  # ~4 s @ 48 kHz
         self.audio_capture = AudioCapture(self.ringbuffer, samplerate=48000, blocksize=1024)
         self._current_device_index: int | None = None
-        self._settings = QSettings()
+        self._app_settings = AppSettings()
+        self._settings = self._app_settings.raw  # compat for any remaining direct use
+        self._current_pfg_path: str | None = None
 
         # Analysis state (Phase 3)
         self._analysis_timer: QTimer | None = None
@@ -311,6 +316,11 @@ class OptiTuneMainWindow(QMainWindow):
         save_action.setShortcut("Ctrl+S")
         save_action.triggered.connect(self._on_save)
         file_menu.addAction(save_action)
+
+        save_as_action = QAction("Save &As…", self)
+        save_as_action.setShortcut("Ctrl+Shift+S")
+        save_as_action.triggered.connect(self._on_save_as)
+        file_menu.addAction(save_as_action)
 
         file_menu.addSeparator()
         quit_action = QAction("&Quit", self)
@@ -551,7 +561,7 @@ class OptiTuneMainWindow(QMainWindow):
 
         # 2. Saved preference
         if dev_to_use is None:
-            saved = self._settings.value("audio/last_input_device_index", None, type=int)
+            saved = self._app_settings.get_last_input_device_index()
             if isinstance(saved, int):
                 # Validate it still exists as input
                 try:
@@ -594,7 +604,7 @@ class OptiTuneMainWindow(QMainWindow):
             self._current_device_index = device_index
 
             # Persist (dialog also does this, but ensure)
-            self._settings.setValue("audio/last_input_device_index", int(device_index))
+            self._app_settings.set_last_input_device_index(int(device_index))
             self._settings.sync()
 
             self._device_label.setText(f"Input: {name}  ")
@@ -1866,59 +1876,31 @@ class OptiTuneMainWindow(QMainWindow):
 
     def _persist_scale_session_settings(self) -> None:
         """Write active series + arm target so a crash mid-session can resume."""
-        s = self._settings
-        pc = self._scale_pitch_class
-        if pc is None:
-            self._clear_scale_session_settings()
-            return
-        s.setValue("scale/active_pitch_class", int(pc))
-        if self._last_recorded_midi is not None:
-            s.setValue("scale/last_recorded_midi", int(self._last_recorded_midi))
-        else:
-            s.remove("scale/last_recorded_midi")
-        if self._record_selected_midi is not None:
-            s.setValue("scale/armed_midi", int(self._record_selected_midi))
-        else:
-            s.remove("scale/armed_midi")
-        s.sync()
+        self._app_settings.set_scale_session(
+            active_pitch_class=self._scale_pitch_class,
+            last_recorded_midi=self._last_recorded_midi,
+            armed_midi=self._record_selected_midi,
+        )
 
     def _clear_scale_session_settings(self) -> None:
-        s = self._settings
-        s.remove("scale/active_pitch_class")
-        s.remove("scale/last_recorded_midi")
-        s.remove("scale/armed_midi")
-        s.sync()
+        self._app_settings.clear_scale_session()
 
     def _restore_scale_session_settings(self) -> None:
         """If QSettings has an interrupted series, re-enter scale mode (not auto-armed)."""
-        s = self._settings
-        if not s.contains("scale/active_pitch_class"):
+        d = self._app_settings.get_scale_session()
+        pc = d.get("active_pitch_class")
+        if pc is None:
             return
-        raw_pc = s.value("scale/active_pitch_class")
-        if raw_pc is None or raw_pc == "":
-            return
-        try:
-            pc = int(raw_pc)
-        except (TypeError, ValueError):
-            return
-        # Reconstruct a representative MIDI in that class for enter_scale
-        seed = next(m for m in range(21, 109) if m % 12 == pc)
+        seed = next(m for m in range(21, 109) if m % 12 == int(pc))
         import time as _t
 
         self._scale_session.enter_scale(seed, now=_t.time())
-        if s.contains("scale/last_recorded_midi"):
-            try:
-                self._last_recorded_midi = int(s.value("scale/last_recorded_midi"))  # type: ignore[arg-type]
-            except (TypeError, ValueError):
-                self._last_recorded_midi = None
-        if s.contains("scale/armed_midi"):
-            try:
-                armed = int(s.value("scale/armed_midi"))  # type: ignore[arg-type]
-                self._record_selected_midi = armed
-                self.keyboard.set_current_key(armed)
-                self.keyboard.set_key_state(armed, KeyState.ARMED)
-            except (TypeError, ValueError):
-                pass
+        self._last_recorded_midi = d.get("last_recorded_midi")
+        armed = d.get("armed_midi")
+        if armed is not None:
+            self._record_selected_midi = int(armed)
+            self.keyboard.set_current_key(int(armed))
+            self.keyboard.set_key_state(int(armed), KeyState.ARMED)
         self._update_series_status()
         armed_s = (
             f"{self._record_selected_midi} ({midi_to_note_name(self._record_selected_midi)})"
@@ -1982,34 +1964,81 @@ class OptiTuneMainWindow(QMainWindow):
 
     @Slot()
     def _on_open(self) -> None:
-        # For v0.1 the auto-load on launch + explicit New/Clear cover the need.
-        # Full file dialog can be added later.
-        path = Piano.default_persist_path()
-        loaded = Piano.load_json(path)
-        if loaded:
-            self._piano = loaded
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open tuning file",
+            "",
+            "OptiTune tuning (*.pfg);;JSON session (*.json);;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            if path.lower().endswith(".pfg"):
+                piano, meta = load_pfg(path)
+                self._piano = piano
+                self._initial_a4 = float(piano.a4)
+                self._temperament = str(meta.get("temperament") or "equal")
+                self._current_pfg_path = path
+                self._app_settings.add_recent_file(path)
+            else:
+                loaded = Piano.load_json(path)
+                if loaded is None:
+                    QMessageBox.warning(self, "Open", f"Could not load {path}")
+                    return
+                self._piano = loaded
+                self._current_pfg_path = None
             self.keyboard.clear_all()
+            assert self._piano is not None
             for m, k in self._piano.keys.items():
                 if k.measured_b is not None or k.measured_f0 is not None:
                     self.keyboard.set_key_state(m, KeyState.MEASURED)
+            if hasattr(self, "_a4_label") and self._a4_label is not None:
+                self._a4_label.setText(f"  A4 = {self._initial_a4:.1f} Hz")
             self._update_curve_status()
-            QMessageBox.information(self, "Open", f"Loaded session from {path}")
-        else:
-            QMessageBox.information(
-                self, "Open", "No saved session found (auto-saved on every record)."
-            )
+            self._refresh_curve_widgets()
+            self.statusBar().showMessage(f"Opened {path}", 4000)
+        except Exception as exc:
+            QMessageBox.warning(self, "Open", f"Failed to open:\n{exc}")
 
     @Slot()
     def _on_save(self) -> None:
-        if self._piano:
+        if self._piano is None:
+            QMessageBox.information(self, "Save", "Nothing to save yet.")
+            return
+        if self._current_pfg_path:
+            try:
+                save_pfg(self._piano, self._current_pfg_path, temperament=self._temperament)
+                self._save_persisted_piano()
+                self._app_settings.add_recent_file(self._current_pfg_path)
+                self.statusBar().showMessage(f"Saved {self._current_pfg_path}", 3000)
+            except Exception as exc:
+                QMessageBox.warning(self, "Save", f"Failed:\n{exc}")
+            return
+        self._on_save_as()
+
+    @Slot()
+    def _on_save_as(self) -> None:
+        if self._piano is None:
+            QMessageBox.information(self, "Save As", "Nothing to save yet.")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save tuning file",
+            self._current_pfg_path or "piano.pfg",
+            "OptiTune tuning (*.pfg)",
+        )
+        if not path:
+            return
+        if not path.lower().endswith(".pfg"):
+            path = path + ".pfg"
+        try:
+            save_pfg(self._piano, path, temperament=self._temperament)
+            self._current_pfg_path = path
             self._save_persisted_piano()
-            QMessageBox.information(
-                self,
-                "Save",
-                f"Session saved to {Piano.default_persist_path()} (also auto-saved after each record).",
-            )
-        else:
-            QMessageBox.information(self, "Save", "Nothing to save yet - record a few keys first.")
+            self._app_settings.add_recent_file(path)
+            self.statusBar().showMessage(f"Saved {path}", 3000)
+        except Exception as exc:
+            QMessageBox.warning(self, "Save As", f"Failed:\n{exc}")
 
     @Slot()
     def _on_about(self) -> None:

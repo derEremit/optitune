@@ -221,19 +221,17 @@ recording pass → solve → tune → save) works in the GUI; all widget tests g
 
 ## Milestone 5 — Persistence & interchange (target: `0.7.0`)
 
-- [ ] **`.pfg` tuning-file format** — `src/optitune/persistence/tuning_file.py`
-      per spec §4.4: XML with `<piano>/<keyboard>/<key>` (B, partials, cent
-      offset) + `<spectrum>` base64-zipped cent-binned SPLA; XSD shipped in
-      package, validated on load. Round-trip property test (hypothesis: random
-      valid pianos survive save→load bit-exact on floats within tolerance).
+- [x] **`.pfg` tuning-file format** — `persistence/tuning_file.py`: XML
+      `<piano>/<meta>/<keyboard>/<key>` + zlib-base64 spectrum + tuning_curve.
+      Round-trip test. XSD / hypothesis property test optional polish.
 - [ ] **EPT `.ept` import** — reader for the EPT XML outer structure mapping into
       `Piano`. Test against a small hand-written `.ept` fixture.
-- [ ] **Settings wrapper** — `src/optitune/persistence/settings.py` centralizing
-      the QSettings keys currently scattered in `main_window.py` /
-      `device_selector.py` (typed accessors, defaults in one place).
-- [ ] **Wire File menu** — Open/Save/Save-As use `.pfg` (JSON
-      `current_piano.json` stays as crash-recovery autosave only); recent-files
-      list; unsaved-changes prompt on close.
+- [x] **Settings wrapper** — `persistence/settings.py` (`AppSettings`): audio
+      device, scale session, temperament/A4, recent files. MainWindow scale +
+      audio path migrated.
+- [x] **Wire File menu** — Open/Save/Save-As for `.pfg` (+ JSON open); recent
+      files tracked; JSON `current_piano.json` remains crash-recovery autosave.
+      Unsaved-changes prompt on close still open.
 
 **Milestone verification:** save a tuned piano, reopen, resume tuning with
 identical targets; import an EPT fixture; `pytest tests/persistence/ -q` green.

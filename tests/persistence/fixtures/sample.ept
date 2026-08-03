@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Minimal hand-written EPT-style fixture for import tests -->
+<piano>
+  <name>Fixture Piano</name>
+  <concertPitch>440</concertPitch>
+  <keys>
+    <key number="39">
+      <!-- EPT key numbers are often 0..87; we also accept midi attributes -->
+      <recordedFrequency>130.81</recordedFrequency>
+      <inharmonicity>0.00025</inharmonicity>
+    </key>
+    <key number="48">
+      <recordedFrequency>261.63</recordedFrequency>
+      <inharmonicity>0.0004</inharmonicity>
+    </key>
+    <key number="57">
+      <recordedFrequency>440.0</recordedFrequency>
+      <inharmonicity>0.0003</inharmonicity>
+    </key>
+  </keys>
+</piano>
