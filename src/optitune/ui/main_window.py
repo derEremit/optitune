@@ -1384,26 +1384,14 @@ class OptiTuneMainWindow(QMainWindow):
         """
         Called at CAPTURE_FINISHED.
 
-        This is the authoritative correctness gate (better architecture):
-        even if a wrong note slipped the onset gate, we can still refuse to
-        store the measurement and refuse to auto-advance.
-
-        Rules (v1):
-        - If we are in scale mode (_scale_pitch_class is set), the captured note's
-          pitch class must match.
-        - The captured pitch must be within SCALE_MODE_CENT_TOLERANCE of the
-          currently armed target (if any).
-        - If both pass: accept, update last_recorded, possibly switch series,
-          return True.
-        - If anything fails: reject (caller must not commit), stay on the same
-          armed target, return False.
+        Thin adapter: fetch estimates here, pure accept/reject + C↔F switch
+        live in ScaleSession.decide_commit.
         """
         armed = self._record_selected_midi
 
         # Prefer a fresh analysis of the audio that was just captured.
-        # This is the key fix for continuous playing: _last_est can easily be
-        # from the previous note because the full PFD analysis is slower than
-        # the note rate.
+        # _last_est can easily be from the previous note (full PFD is slower
+        # than the note rate on continuous playing).
         fresh = self._get_fresh_estimate_for_commit()
         live = self._last_est
 
@@ -1428,111 +1416,77 @@ class OptiTuneMainWindow(QMainWindow):
             _diag("[DIAG][CommitDecision] REJECT: incomplete estimate at capture end")
             return False
 
-        captured_pc = int(captured_midi) % 12
-        current_scale_pc = getattr(self, "_scale_pitch_class", None)
+        tracked = self._f0_tracker.current()
+        tracker_f0 = float(tracked) if tracked is not None and tracked > 20 else None
+        prev_pc = self._scale_pitch_class
 
-        # 1. Pitch-class check when in scale mode
-        if current_scale_pc is not None and not self._pitch_class_matches_expectation(
-            float(captured_midi), current_scale_pc
-        ):
-            err_cents = self._cents_error_to_target(f_est, armed) if armed else 999.0
-            octave_err = self._is_probable_octave_or_partial_error(armed, captured_midi)
+        decision = self._scale_session.decide_commit(
+            f_est=float(f_est),
+            captured_midi=captured_midi,
+            armed_midi=armed,
+            a4=float(self._initial_a4),
+            tracker_f0=tracker_f0,
+        )
+
+        f_used = decision.f_est_used if decision.f_est_used is not None else float(f_est)
+        midi_used = (
+            decision.captured_midi if decision.captured_midi is not None else captured_midi
+        )
+
+        if not decision.accept:
+            octave_err = self._is_probable_octave_or_partial_error(armed, midi_used)
             tag = " (probable octave/partial error)" if octave_err else ""
-            _diag(
-                f"[DIAG][CommitDecision] REJECT (wrong class at commit){tag} | "
-                f"source={est_source} captured_pc={captured_pc} expected_pc={current_scale_pc} "
-                f"armed={armed} err_to_target={err_cents:.1f}¢ f_est={f_est:.1f}"
+            err_cents = (
+                self._cents_error_to_target(f_used, armed) if armed is not None else 999.0
             )
+            reason = decision.reason or "reject"
+            if reason == "wrong_class":
+                _diag(
+                    f"[DIAG][CommitDecision] REJECT (wrong class at commit){tag} | "
+                    f"source={est_source} captured_pc={int(midi_used) % 12} "
+                    f"expected_pc={prev_pc} armed={armed} "
+                    f"err_to_target={err_cents if err_cents is not None else 999:.1f}¢ "
+                    f"f_est={f_used:.1f}"
+                )
+            else:
+                _diag(
+                    f"[DIAG][CommitDecision] REJECT ({reason}){tag} | "
+                    f"source={est_source} armed={armed} "
+                    f"({midi_to_note_name(armed) if armed is not None else '?'}) "
+                    f"captured≈{midi_used} "
+                    f"error={err_cents if err_cents is not None else 999:.1f}¢ "
+                    f"> {self.SCALE_MODE_CENT_TOLERANCE}¢ f_est={f_used:.1f}"
+                )
             return False
 
-        # 2. Tolerance check against the armed target (the thing the user intended to record)
-        if armed is not None:
-            err = self._cents_error_to_target(f_est, armed)
-            if err is not None and abs(err) > self.SCALE_MODE_CENT_TOLERANCE:
-                # Fallback: temporal tracker often has clean decay frames while the
-                # single fresh window is polluted (next note / silence / attack).
-                tracked = self._f0_tracker.current()
-                if tracked is not None and tracked > 20:
-                    err_tr = self._cents_error_to_target(tracked, armed)
-                    if err_tr is not None and abs(err_tr) <= self.SCALE_MODE_CENT_TOLERANCE:
-                        _diag(
-                            "[DIAG][CommitDecision] fresh far (%.1f¢) but tracker OK "
-                            "(%.1f¢ @ %.1f Hz) - accepting via tracker",
-                            err,
-                            err_tr,
-                            tracked,
-                        )
-                        f_est = tracked
-                        captured_midi = armed
-                        est_source = f"{est_source}+tracker"
-                        err = err_tr
-                if err is not None and abs(err) > self.SCALE_MODE_CENT_TOLERANCE:
-                    octave_err = self._is_probable_octave_or_partial_error(armed, f_est)
-                    tag = " (probable octave/partial error)" if octave_err else ""
-                    _diag(
-                        f"[DIAG][CommitDecision] REJECT (too far from armed target){tag} | "
-                        f"source={est_source} armed={armed} ({midi_to_note_name(armed)}) "
-                        f"captured≈{captured_midi} error={err:.1f}¢ > {self.SCALE_MODE_CENT_TOLERANCE}¢ f_est={f_est:.1f}"
-                    )
-                    return False
+        if tracker_f0 is not None and abs(f_used - float(f_est)) > 0.5:
+            est_source = f"{est_source}+tracker"
+            _diag(
+                "[DIAG][CommitDecision] fresh far but tracker OK (%.1f Hz) - accepting via tracker",
+                f_used,
+            )
 
-        # Accept
-        class_ok = current_scale_pc is None or self._pitch_class_matches_expectation(
-            float(captured_midi), current_scale_pc
-        )
         _diag(
             f"[DIAG][CommitDecision] ACCEPT | source={est_source} armed={armed} "
-            f"captured≈{captured_midi} class_ok={class_ok}"
+            f"captured≈{midi_used} reason={decision.reason}"
         )
 
-        # Extra diagnostic: show how much the fresh estimate differed from the live one
         if fresh and live and est_source.startswith("fresh"):
             live_f = live.get("f_est") or live.get("f0")
             if live_f:
-                diff_cents = 1200.0 * np.log2(f_est / max(live_f, 1))
+                diff_cents = 1200.0 * np.log2(f_used / max(float(live_f), 1))
                 _diag(f"[DIAG][CommitDecision] fresh vs live diff = {diff_cents:+.1f}¢")
 
-        # 3. Series switch at commit time (eager, single-note trigger, only for the known C/F pair)
-        self._maybe_switch_series(captured_pc, current_scale_pc, captured_midi)
-
-        return True
-
-    def _maybe_switch_series(
-        self, captured_pc: int, current_scale_pc: int | None, captured_midi: int | float
-    ) -> None:
-        """
-        Eager series switch at commit time.
-
-        Only switches between the two known root-note series we support today (C=0 and F=5).
-        Triggered by a single captured note whose pitch class is the "other" one.
-        No multi-note hysteresis (per design).
-
-        Called only after a successful accept decision so we never switch on rejected captures.
-        """
-        if current_scale_pc is None:
-            return
-
-        if captured_pc == current_scale_pc:
-            return
-
-        other = 5 if current_scale_pc == 0 else 0
-        if captured_pc == other:
-            self._scale_pitch_class = captured_pc
+        if decision.switch_to_pc is not None:
             _diag(
-                f"[DIAG][CommitDecision] Series SWITCHED to pitch class {captured_pc} "
-                f"based on captured note {captured_midi}"
+                f"[DIAG][CommitDecision] Series SWITCHED to pitch class {decision.switch_to_pc} "
+                f"based on captured note {midi_used} (was pc={prev_pc})"
             )
-            # Give the new series the same short grace as a fresh arm (helps first note of the new series)
             import time as _t
 
             self._scale_gate_grace_until = _t.time() + 0.65
-        else:
-            # Future-proof: we saw activity from a third class while in a known series.
-            # Do not auto-switch; just log so we can decide later behavior.
-            _diag(
-                f"[DIAG][CommitDecision] Series switch opportunity ignored (unexpected class {captured_pc}, "
-                f"current series {current_scale_pc}) for note {captured_midi}"
-            )
+
+        return True
 
     def _is_probable_octave_or_partial_error(
         self, armed_midi: int | None, est_midi_f: float | None

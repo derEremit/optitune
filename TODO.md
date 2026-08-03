@@ -122,8 +122,9 @@ deferred items).
 - [x] **Extract the expectation layer out of the UI class** — `scale_session.py`
       pure SM (enter/exit, onset gate, next_target C↔F, decide_commit + tracker
       fallback). MainWindow property-mirrors session fields; `_on_record_next`
-      uses `next_target`. Real-master tests still green. Further commit-path
-      delegation can continue incrementally.
+      uses `next_target`; `_decide_commit_and_maybe_switch` is a thin adapter
+      over `ScaleSession.decide_commit` (estimate fetch + diagnostics only).
+      Real-master C and C-then-F green.
 - [x] **Current-series indicator** — status-bar "Series: C (2/7) -> C3"; updates
       on arm / disarm / reject / successful advance. pytest-qt coverage.
 - [x] **Subtle rejection feedback** — `KeyboardWidget.flash_rejection` (hot pink
