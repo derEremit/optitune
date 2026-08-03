@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import math
 import os
 
 import numpy as np
@@ -194,6 +195,7 @@ class OptiTuneMainWindow(QMainWindow):
         self._follow_locked_midi: int | None = None  # Lock/Stepwise anchor
         self._temperament: str = "equal"
         self._interval_weights: dict[str, float] = dict(DEFAULT_INTERVAL_WEIGHTS)
+        self._multi_partial_strobe: bool = False
         self._prev_level_db: float = -60.0
         self._last_during_cap_check: float = 0.0
         self._curve_status_label: QLabel | None = None
@@ -475,6 +477,15 @@ class OptiTuneMainWindow(QMainWindow):
         tb.addAction(self._compute_action)
 
         tb.addSeparator()
+
+        self._multi_strobe_action = QAction("◎ Multi-partial strobe", self)
+        self._multi_strobe_action.setCheckable(True)
+        self._multi_strobe_action.setToolTip(
+            "When ON: concentric strobe rings for partials 1–3 "
+            "(outer = fundamental). Useful while tuning unisons/octaves."
+        )
+        self._multi_strobe_action.toggled.connect(self._on_multi_partial_strobe)
+        tb.addAction(self._multi_strobe_action)
 
         reset_action = QAction("Reset Displays", self)
         reset_action.triggered.connect(self._on_reset_displays)
@@ -958,6 +969,15 @@ class OptiTuneMainWindow(QMainWindow):
         self.cents_display.set_cents(clipped_cents)
         self.strobe.set_phase_delta_hz(float(delta_hz))
         self.strobe.set_target_frequency(target_hz)
+        if self._multi_partial_strobe and target_hz > 1 and f_est > 1:
+            # Approximate partial Hz errors: n*f0 vs n*target (ET stretch of partial ladder)
+            b_est = float(est.get("b") or 0.0003)
+            deltas: list[tuple[int, float]] = []
+            for n in (1, 2, 3):
+                t_n = target_hz * n * math.sqrt(1.0 + b_est * n * n)
+                m_n = f_est * n * math.sqrt(1.0 + b_est * n * n)
+                deltas.append((n, float(m_n - t_n)))
+            self.strobe.set_partial_deltas(deltas)
         self._update_spectrum_from_audio(audio, fs, f_est)
 
         forced = self._auto_record_ctrl.get_forced_visual_state()
@@ -1875,6 +1895,14 @@ class OptiTuneMainWindow(QMainWindow):
         self.railsback.set_measured_deviations(measured_dev)
         self.railsback.set_a4_marker(True)
         self.b_curve.set_measured_b(measured_b_from_piano(piano))
+
+    def _on_multi_partial_strobe(self, checked: bool) -> None:
+        self._multi_partial_strobe = bool(checked)
+        self.strobe.set_multi_partial_enabled(self._multi_partial_strobe)
+        self.statusBar().showMessage(
+            "Multi-partial strobe ON" if checked else "Multi-partial strobe OFF",
+            2000,
+        )
 
     @Slot()
     def _on_interval_weights(self) -> None:

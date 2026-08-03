@@ -204,9 +204,10 @@ entropy and friends are not started.
       Standalone temperament-preview dialog / QSettings persist optional later.
 - [x] **Interval-weight editor** — presets + spin-box dialog; flows into
       `TuningConstraints` on compute.
-- [ ] **Tuning-mode polish** — per-partial strobe rings option (spec §3.7),
-      target-vs-measured cents needle behavior verified against synthetic tones
-      end-to-end (generator → capture sim → display state).
+- [x] **Multi-partial strobe** — toolbar toggle; concentric rings for partials
+      1–3 with independent phase rates from f0 vs target ladder.
+- [ ] **Tuning-mode polish (remainder)** — target-vs-measured cents needle
+      e2e against synthetic tones (generator → capture sim → display state).
 
 **Milestone verification:** full manual workflow of spec §8 (new piano →
 recording pass → solve → tune → save) works in the GUI; all widget tests green.
@@ -237,19 +238,21 @@ identical targets; import an EPT fixture; `pytest tests/persistence/ -q` green.
 
 Spec §4.1 mandates worker threads; today all analysis runs on GUI-thread QTimers.
 
-- [ ] **STFT/analysis worker `QThread`s** — `dsp/analysis_worker.py` scaffold
-      (`AnalysisWorker` + `frame_ready` / drop-if-busy) + tests. **Still open:**
-      migrate MainWindow `_run_live_analysis` fully onto the worker so GUI only
-      renders; real-master tests must stay green on that path.
+- [x] **STFT/analysis worker `QThread`s** — `AnalysisWorker` + timer path
+      (`_tick_live_analysis` / `frame_ready` → `_apply_analysis_result`). Tests
+      force `OPTITUNE_SYNC_ANALYSIS=1` so feed harness stays synchronous.
+      Direct `_run_live_analysis` remains for tests/commit-time sync.
 - [ ] **pyfftw in the hot path** — promote from dev-extra to main dependency
       (keep `numpy.fft` fallback when unavailable); `FFTW_MEASURE` plan cache
       keyed by frame length. Benchmark test asserting analysis tick < 50 ms for
       32768-frame and < 150 ms for 65536-frame on CI hardware.
 - [ ] **Latency/CPU budget** — strobe at 60 Hz without dropped frames while
       analysis runs; measure with a stress test feeding continuous audio.
-- [ ] **Crash-safety pass** — audio device unplug mid-session, PipeWire restart,
-      malformed persisted JSON: all recover to a usable state (tests with mocked
-      capture layer).
+- [x] **Crash-safety (JSON)** — corrupt `current_piano.json` → load returns
+      None; MainWindow still constructs and can start a fresh piano. Device
+      unplug / PipeWire restart still open.
+- [ ] **Crash-safety (audio)** — device unplug mid-session, PipeWire restart
+      recover to a usable state (mocked capture layer).
 
 **Milestone verification:** GUI stays responsive during bass long-frame analysis;
 all tests green; CPU < ~1 core sustained during live tuning.
