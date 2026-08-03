@@ -45,6 +45,7 @@ __all__ = [
     "F_HI",
     "F_LO",
     "N_BINS",
+    "AnalysisWorker",
     "F0Tracker",
     "NoteFollowMode",
     "NoteMatch",
@@ -74,4 +75,5 @@ __all__ = [
     "search_window",
     "slow_bin_spectrum",
     "spectrum_from_audio",
+    "start_analysis_thread",
 ]
