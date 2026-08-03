@@ -408,13 +408,19 @@ class OptiTuneMainWindow(QMainWindow):
         self._curve_status_label = QLabel("  Curve: ET only")
         self._curve_status_label.setMinimumWidth(160)
 
+        self._series_label = QLabel("  Series: -")
+        self._series_label.setMinimumWidth(180)
+        self._series_label.setStyleSheet("color: #a0a0a8;")
+
         status.addPermanentWidget(self._device_label)
         status.addPermanentWidget(self._level_bar)
         status.addPermanentWidget(self._a4_label)
+        status.addPermanentWidget(self._series_label)
         status.addPermanentWidget(self._curve_status_label)
 
         # Initial message (will be overwritten by audio init)
         status.showMessage("Initializing audio...", 1500)
+        self._update_series_status()
 
     def _update_curve_status(self) -> None:
         """Refresh the curve indicator in the status bar."""
@@ -427,6 +433,32 @@ class OptiTuneMainWindow(QMainWindow):
             n = self._piano.measured_count()
             self._curve_status_label.setText(f"  Curve: active ({n} measured)")
             self._curve_status_label.setStyleSheet("color: #5fa8ff; font-weight: 500;")
+
+    def _update_series_status(self) -> None:
+        """Refresh 'Series: C (2/7) -> C3' style indicator."""
+        if not hasattr(self, "_series_label") or self._series_label is None:
+            return
+        pc = self._scale_pitch_class
+        if pc is None:
+            self._series_label.setText("  Series: -")
+            self._series_label.setStyleSheet("color: #a0a0a8;")
+            return
+        name = {0: "C", 5: "F"}.get(pc, f"pc{pc}")
+        series_hi = {0: 96, 5: 101}.get(pc, 108)
+        first = next(m for m in range(21, 109) if m % 12 == pc)
+        total = len(list(range(first, series_hi + 1, 12)))
+        measured = 0
+        if self._piano is not None:
+            for m in range(first, series_hi + 1, 12):
+                k = self._piano.keys.get(m)
+                if k is not None and (k.measured_f0 is not None or k.measured_b is not None):
+                    measured += 1
+        armed = self._record_selected_midi
+        armed_txt = ""
+        if armed is not None:
+            armed_txt = f" -> {midi_to_note_name(armed)}"
+        self._series_label.setText(f"  Series: {name} ({measured}/{total}){armed_txt}")
+        self._series_label.setStyleSheet("color: #7dcea0; font-weight: 500;")
 
     # ---------------- Audio initialization & device handling ----------------
 
@@ -1101,6 +1133,7 @@ class OptiTuneMainWindow(QMainWindow):
                 import time as _t
 
                 self._scale_session.enter_scale(int(target), now=_t.time())
+                self._update_series_status()
                 _diag(
                     f"[DIAG][ScaleGate] Entered scale mode for pitch class {self._scale_pitch_class} (armed on {target})"
                 )
@@ -1138,6 +1171,7 @@ class OptiTuneMainWindow(QMainWindow):
 
             # Layer 1: leaving scale mode when the user explicitly stops arming
             self._scale_session.exit_scale()
+            self._update_series_status()
             _diag("[DIAG][ScaleGate] Exited scale mode (manual disarm)")
 
             # Revert visual state for the (ex-)target
@@ -1242,11 +1276,13 @@ class OptiTuneMainWindow(QMainWindow):
                 self._f0_tracker.clear()
                 self.keyboard.set_key_state(target, KeyState.ARMED)
                 self.keyboard.set_current_key(target)
+                self.keyboard.flash_rejection(target, duration_ms=450)
                 self._apply_auto_record_visual_force()
                 import time as _t
 
                 self._scale_gate_grace_until = _t.time() + 0.4  # allow quick retry
-            self._during_capture_rejection_until = 0.0
+            self._during_capture_rejection_until = now + 0.4
+            self._update_series_status()
             return
 
         # === Good capture - proceed with the original commit + advance logic ===
@@ -1281,6 +1317,7 @@ class OptiTuneMainWindow(QMainWindow):
                 f"Auto-captured. Re-armed for next key ({next_midi}). Go play it.",
                 0,
             )
+            self._update_series_status()
 
             # Short guards so the next scale note attack is not swallowed
             now = _time.time()

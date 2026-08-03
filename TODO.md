@@ -124,12 +124,10 @@ deferred items).
       fallback). MainWindow property-mirrors session fields; `_on_record_next`
       uses `next_target`. Real-master tests still green. Further commit-path
       delegation can continue incrementally.
-- [ ] **Current-series indicator** — status-bar widget showing "Series: C
-      (5/7 captured)" with the armed target; updates on switch/exhaustion.
-- [ ] **Subtle rejection feedback** — consume the existing
-      `_during_capture_rejection_until` / rejection-flash hooks: brief red flash
-      on the armed key in `keyboard_widget.py` + transient status-bar message.
-      pytest-qt test: simulated rejection sets the flash state and it decays.
+- [x] **Current-series indicator** — status-bar "Series: C (2/7) -> C3"; updates
+      on arm / disarm / reject / successful advance. pytest-qt coverage.
+- [x] **Subtle rejection feedback** — `KeyboardWidget.flash_rejection` (hot pink
+      flash, preserves ARMED); wired on commit reject in MainWindow. pytest-qt.
 - [ ] **Series lifecycle UX** — completion feedback when a series is exhausted;
       manual series exit; persist active series + last-recorded note in QSettings
       so a crash mid-session resumes cleanly.

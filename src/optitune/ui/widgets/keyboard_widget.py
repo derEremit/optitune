@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from PySide6.QtCore import QRectF, Qt, Signal
+from PySide6.QtCore import QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QMouseEvent, QPainter, QPaintEvent, QPen
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
@@ -61,16 +61,35 @@ class KeyboardWidget(QWidget):
         self._states: dict[int, KeyState] = {}
         self._current: int | None = None
         self._detected: int | None = None
+        self._rejection_flash_midi: int | None = None
+        self._flash_timer = QTimer(self)
+        self._flash_timer.setSingleShot(True)
+        self._flash_timer.timeout.connect(self._clear_rejection_flash)
 
         # Precompute which MIDI we draw
         self._drawn_midis: list[int] = list(range(KEYBOARD_LOW, KEYBOARD_HIGH + 1))
 
         self.setToolTip(
-            "Piano keyboard — highlighted key shows live detected note (yellow). Click to select (future lock)."
+            "Piano keyboard - highlighted key shows live detected note (yellow). Click to select (future lock)."
         )
 
         # For hit testing
         self._key_rects: dict[int, QRectF] = {}  # midi -> rect (white or black)
+
+    @property
+    def rejection_flash_midi(self) -> int | None:
+        return self._rejection_flash_midi
+
+    def flash_rejection(self, midi: int, duration_ms: int = 400) -> None:
+        """Brief bright flash on a key (does not replace ARMED/MEASURED state)."""
+        self._rejection_flash_midi = int(midi)
+        self._flash_timer.stop()
+        self._flash_timer.start(max(50, int(duration_ms)))
+        self.update()
+
+    def _clear_rejection_flash(self) -> None:
+        self._rejection_flash_midi = None
+        self.update()
 
     def set_key_state(self, midi: int, state: KeyState) -> None:
         self._states[midi] = state
@@ -90,6 +109,8 @@ class KeyboardWidget(QWidget):
         self._states.clear()
         self._current = None
         self._detected = None
+        self._rejection_flash_midi = None
+        self._flash_timer.stop()
         self.update()
 
     # ---------------- Painting (real keyboard look) ----------------
@@ -131,7 +152,11 @@ class KeyboardWidget(QWidget):
 
             # State color or base
             state = self._states.get(midi)
-            if midi == self._current:
+            flashing = midi == self._rejection_flash_midi
+            if flashing:
+                fill = QColor(255, 40, 90)  # hot pink-red rejection flash
+                border = QColor(255, 200, 220)
+            elif midi == self._current:
                 fill = QColor(255, 220, 80)  # bright yellow/gold for current/detected
                 border = QColor(255, 240, 150)
             elif state == KeyState.IN_TUNE:
@@ -188,7 +213,11 @@ class KeyboardWidget(QWidget):
             self._key_rects[midi] = key_rect
 
             state = self._states.get(midi)
-            if midi == self._current:
+            flashing = midi == self._rejection_flash_midi
+            if flashing:
+                fill = QColor(220, 30, 70)
+                border = QColor(255, 180, 200)
+            elif midi == self._current:
                 fill = QColor(255, 200, 50)
                 border = QColor(255, 230, 120)
             elif state == KeyState.IN_TUNE:
