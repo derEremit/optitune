@@ -16,6 +16,7 @@ from .binning import (
 )
 from .f0_tracker import F0Tracker
 from .analysis_worker import AnalysisWorker, start_analysis_thread
+from .fft_backend import fft_backend_name, rfft, rfftfreq
 from .note_follow import NoteFollowMode, apply_follow_to_midi, search_window
 from .note_recognizer import (
     NoteMatch,
@@ -60,7 +61,10 @@ __all__ = [
     "compute_stft",
     "detuned_tone",
     "estimate_pitch",
+    "fft_backend_name",
     "find_spectral_peaks",
+    "rfft",
+    "rfftfreq",
     "fletcher_young_partial_frequencies",
     "generate_inharmonic_tone",
     "get_central_frame_power",

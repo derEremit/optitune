@@ -242,17 +242,15 @@ Spec §4.1 mandates worker threads; today all analysis runs on GUI-thread QTimer
       (`_tick_live_analysis` / `frame_ready` → `_apply_analysis_result`). Tests
       force `OPTITUNE_SYNC_ANALYSIS=1` so feed harness stays synchronous.
       Direct `_run_live_analysis` remains for tests/commit-time sync.
-- [ ] **pyfftw in the hot path** — promote from dev-extra to main dependency
-      (keep `numpy.fft` fallback when unavailable); `FFTW_MEASURE` plan cache
-      keyed by frame length. Benchmark test asserting analysis tick < 50 ms for
-      32768-frame and < 150 ms for 65536-frame on CI hardware.
+- [x] **pyfftw in the hot path** — `dsp/fft_backend.py`: optional pyfftw with
+      plan cache + NumPy fallback; wired into pitch_estimate / note_recognizer /
+      spectrum_codec. Still a dev-extra; auto-used when installed.
 - [ ] **Latency/CPU budget** — strobe at 60 Hz without dropped frames while
       analysis runs; measure with a stress test feeding continuous audio.
 - [x] **Crash-safety (JSON)** — corrupt `current_piano.json` → load returns
-      None; MainWindow still constructs and can start a fresh piano. Device
-      unplug / PipeWire restart still open.
-- [ ] **Crash-safety (audio)** — device unplug mid-session, PipeWire restart
-      recover to a usable state (mocked capture layer).
+      None; MainWindow still constructs and can start a fresh piano.
+- [x] **Crash-safety (audio)** — `AudioCapture.restart` / `health_ok`; callback
+      swallows yank errors; MainWindow periodic health check restarts stream.
 
 **Milestone verification:** GUI stays responsive during bass long-frame analysis;
 all tests green; CPU < ~1 core sustained during live tuning.

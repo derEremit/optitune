@@ -13,6 +13,7 @@ import zlib
 import numpy as np
 
 from optitune.dsp.binning import N_BINS, apply_a_weight_to_binned, bin_spectrum_vectorized
+from optitune.dsp.fft_backend import rfft, rfftfreq
 
 
 def pack_spectrum(spectrum: np.ndarray) -> str:
@@ -57,9 +58,9 @@ def spectrum_from_audio_a_weighted(audio: np.ndarray, fs: float) -> np.ndarray:
         x = pad
         n = target
     w = np.hanning(n)
-    spec = np.fft.rfft(x * w)
+    spec = rfft(x * w)
     power = np.abs(spec) ** 2
-    freqs = np.fft.rfftfreq(n, 1.0 / fs)
+    freqs = rfftfreq(n, 1.0 / fs)
     L = bin_spectrum_vectorized(freqs, power)
     L_a = apply_a_weight_to_binned(L)
     return np.asarray(L_a, dtype=np.float32)

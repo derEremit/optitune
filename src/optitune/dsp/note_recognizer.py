@@ -14,6 +14,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from optitune.dsp.binning import N_BINS, bin_index, bin_spectrum_vectorized
+from optitune.dsp.fft_backend import rfft, rfftfreq
 from optitune.dsp.peaks import cents, find_spectral_peaks
 from optitune.dsp.synth import midi_to_hz
 
@@ -104,9 +105,9 @@ def spectrum_from_audio(audio: np.ndarray, fs: float) -> np.ndarray:
         x = pad
         n = target
     w = np.hanning(n)
-    spec = np.fft.rfft(x * w)
+    spec = rfft(x * w)
     power = np.abs(spec) ** 2
-    freqs = np.fft.rfftfreq(n, 1.0 / fs)
+    freqs = rfftfreq(n, 1.0 / fs)
     return bin_spectrum_vectorized(freqs, power)
 
 
@@ -125,9 +126,9 @@ def peaks_from_audio(
         x = pad
         n = target
     w = np.hanning(n)
-    spec = np.fft.rfft(x * w)
+    spec = rfft(x * w)
     power = np.abs(spec) ** 2
-    freqs = np.fft.rfftfreq(n, 1.0 / fs)
+    freqs = rfftfreq(n, 1.0 / fs)
     return find_spectral_peaks(freqs, power, min_prominence_db=8.0, max_peaks=max_peaks)
 
 

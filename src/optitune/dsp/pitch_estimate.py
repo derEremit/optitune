@@ -17,6 +17,7 @@ from typing import Any
 import numpy as np
 from scipy.signal import get_window
 
+from optitune.dsp.fft_backend import rfft, rfftfreq
 from optitune.dsp.note_follow import NoteFollowMode, apply_follow_to_midi, search_window
 from optitune.dsp.note_recognizer import recognize_note
 from optitune.dsp.peaks import find_spectral_peaks, pfd_estimate_f0_b
@@ -61,9 +62,9 @@ def estimate_pitch(
     except Exception:
         w = np.hanning(n)
 
-    spec = np.fft.rfft(analysis * w)
+    spec = rfft(analysis * w)
     power = np.abs(spec) ** 2
-    freqs = np.fft.rfftfreq(n, 1.0 / fs)
+    freqs = rfftfreq(n, 1.0 / fs)
     peak_fs, peak_as = find_spectral_peaks(freqs, power, min_prominence_db=14.0, max_peaks=25)
 
     f0 = 440.0

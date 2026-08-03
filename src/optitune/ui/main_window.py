@@ -198,6 +198,7 @@ class OptiTuneMainWindow(QMainWindow):
         self._multi_partial_strobe: bool = False
         self._prev_level_db: float = -60.0
         self._last_during_cap_check: float = 0.0
+        self._last_audio_health_check: float = 0.0
         self._curve_status_label: QLabel | None = None
 
         self._setup_theme()
@@ -751,6 +752,21 @@ class OptiTuneMainWindow(QMainWindow):
     def _update_level_meter(self) -> None:
         """Poll ringbuffer for short window and update the level bar (0-100)."""
         try:
+            # Periodic capture health (~every 2 s): restart if stream died
+            import time as _time
+
+            now = _time.time()
+            if now - self._last_audio_health_check > 2.0:
+                self._last_audio_health_check = now
+                if self._current_device_index is not None and not self.audio_capture.health_ok():
+                    if self.audio_capture.restart():
+                        self.statusBar().showMessage("Audio stream recovered after glitch.", 3000)
+                    elif self.audio_capture.last_error:
+                        self.statusBar().showMessage(
+                            f"Audio device issue: {self.audio_capture.last_error}",
+                            4000,
+                        )
+
             buf = self.ringbuffer.get_latest(1024)
             if len(buf) == 0:
                 self._level_bar.setValue(0)

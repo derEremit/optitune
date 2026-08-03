@@ -87,6 +87,30 @@ class AudioCapture:
         with self._lock:
             self._stop_locked()
 
+    def restart(self) -> bool:
+        """
+        Stop and start again on the last device. Returns True if running.
+        Used after device errors / PipeWire blips.
+        """
+        dev = self._device
+        try:
+            self.stop()
+            self.start(dev)
+            return self.is_running
+        except Exception as exc:
+            self._last_error = str(exc)
+            return False
+
+    def health_ok(self) -> bool:
+        """True if stream exists and claims active (best-effort)."""
+        with self._lock:
+            if self._stream is None:
+                return False
+            try:
+                return bool(self._stream.active)
+            except Exception:
+                return False
+
     def _stop_locked(self) -> None:
         if self._stream is not None:
             try:
@@ -105,12 +129,15 @@ class AudioCapture:
         status: sd.CallbackFlags,
     ) -> None:
         """PortAudio real-time callback — keep it extremely fast."""
-        if status:
-            # Non-fatal (xruns etc.) — we can log lightly but do not print in hot path
-            pass
-        # indata shape: (frames, channels) for float32
-        mono = indata[:, 0] if indata.ndim > 1 else indata
-        self.ringbuffer.push(mono)
+        try:
+            if status:
+                # Non-fatal (xruns etc.) — do not allocate/print in hot path
+                pass
+            mono = indata[:, 0] if indata.ndim > 1 else indata
+            self.ringbuffer.push(mono)
+        except Exception as exc:
+            # Device yank mid-callback — record and let outer layer restart
+            self._last_error = str(exc)
 
     @property
     def is_running(self) -> bool:
