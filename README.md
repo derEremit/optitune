@@ -2,9 +2,13 @@
 
 **One-click launchable, test-driven Linux piano tuning workstation.**
 
-Professional GUI (PySide6) with selectable audio input, live strobe + cents display, spectrum view, interactive keyboard, and full tuning-curve solvers (beat-rate first, entropy per the original Entropy Piano Tuner research).
+Professional GUI (PySide6) with selectable audio input, live strobe + cents display,
+spectrum view, interactive keyboard, beat-rate tuning-curve solver, and an active
+hands-free auto-recording workflow (expectation-driven scale mode).
 
-> **Goal**: Match or exceed commercial tools (pianoscope, PianoMeter) on Linux while remaining 100% open source under GPL-3 and fully testable via synthetic inharmonic tones — no piano required for 95 % of development.
+> **Goal**: Match or exceed commercial tools (pianoscope, PianoMeter) on Linux while
+> remaining 100% open source under GPL-3 and fully testable via synthetic inharmonic
+> tones — no piano required for 95 % of development.
 
 ---
 
@@ -21,48 +25,55 @@ optitune                     # or: ./launch.sh
 - Full menus: **File** (New Piano, Open, Save, Quit) • **Audio** (Input Device..., Test Signal) • **Help** (About)
 - CLI also supports `optitune --help`, `optitune --a4 442.0 --device "Focusrite"`
 
-Alternative launch (works from any directory after clone):
-
-```bash
-./launch.sh
-```
-
 ### Development Installation
 
 ```bash
 uv sync --extra dev
-uv run ruff check
+uv run ruff check .
+uv run ruff format --check .
 uv run mypy src/optitune
-uv run pytest
+uv run pytest -q -m "not real_piano"
 ```
 
 `uv run optitune --help` and the GUI launch both work cleanly.
 
 ---
 
-## Current Development Status (auto-updated)
+## Current Status
 
-**Latest (2026-05-21)**: Phase 0 complete + repaired. GUI now shows a realistic tuner layout with live (stub) cents display, rotating strobe, spectrum area, and 88-key keyboard.
+**Version**: `0.2.0` — Phases 0–4 landed (scaffolding, synthetic-tone DSP, live audio,
+strobe/cents/spectrum/keyboard, recording + beat-rate solver). Roadmap to `v1.0.0`
+lives in [`TODO.md`](TODO.md); history in [`CHANGELOG.md`](CHANGELOG.md).
 
-**Active work**: Phase 1 — strict TDD implementation of the synthetic inharmonic tone generator + full 6-condition test matrix (the foundation everything else depends on).
+**Active work**: hands-free scale recording with **expectation-driven onset detection**
+(design: [`docs/expectation_driven_onset.md`](docs/expectation_driven_onset.md)).
 
-A dedicated DSP + Test Engineer agent is currently building:
-- `dsp/synth.py` (Fletcher-Young exact model)
-- `dsp/binning.py` + `dsp/peaks.py` (PFD B estimator)
-- Comprehensive pytest matrix that must all be green
+| Area | Status |
+|------|--------|
+| Synthetic Fletcher–Young generator + cent binning + PFD | ✅ green (3 extreme matrix rows xfail until NMF) |
+| Live audio capture + device selector | ✅ |
+| Strobe, cents, spectrum, 88-key keyboard | ✅ |
+| Auto-record controller (energy/attack only) | ✅ |
+| Scale-mode expectation gate + commit-time decision | ✅ |
+| Full C-then-F on real master recording | 🚧 blocked on low-note estimator quality (Milestone 1) |
+| Entropy / octave-entropy solvers | ⏳ Milestone 3 |
+| `.pfg` interchange, Flatpak, PyPI | ⏳ later milestones |
 
-Once Phase 1 lands you will be able to:
-- Use `optitune generate-tone ...` to create perfect test signals
-- Click "Test Signal" in the Audio menu and see the (still stub) strobe + cents react
-- Start the real audio capture + device selection work (Phase 2)
+### How to check live status
 
-**How to check live status**
 ```bash
-uv run pytest -q -k "synth or matrix"   # will be the key command after Phase 1
-cat TODO.md                              # always the source of truth
+uv run pytest -q -m "not real_piano"          # CI-safe suite
+uv run pytest tests/dsp/test_synth.py -q      # 8 matrix pass + 3 xfail, 0 xpass
+cat TODO.md                                   # 1.x roadmap (source of truth)
 ```
 
-The project will not move to Phase 2 until the entire synthetic matrix is 100% green and the CLI tone generator works.
+Real-piano acceptance tests (need `testmaterial/c and f.flac`):
+
+```bash
+uv run pytest tests/real_piano/ -q            # full real-master workflows
+OPTITUNE_FAST_C=1 OPTITUNE_DIAG=full \
+  uv run pytest tests/real_piano/test_recording_workflows.py -k c_series -s
+```
 
 ---
 
@@ -70,9 +81,12 @@ The project will not move to Phase 2 until the entire synthetic matrix is 100% g
 
 **This is the non-negotiable heart of the project.**
 
-No DSP, peak picker, strobe, or solver code is allowed to land without first passing a comprehensive battery of tests that use **synthetic inharmonic piano tones** generated from the Fletcher–Young model (exactly as specified in `piano_tuner_implementation_spec.md` §2.1).
+No DSP, peak picker, strobe, or solver code is allowed to land without first passing
+a comprehensive battery of tests that use **synthetic inharmonic piano tones**
+generated from the Fletcher–Young model (exactly as specified in
+`piano_tuner_implementation_spec.md` §2.1).
 
-### The Mandatory 6-Condition Synthetic Test Matrix (Phase 1 Gate)
+### The Mandatory Synthetic Test Matrix
 
 | Condition              | Cents detune     | B range            | MIDI notes     | Purpose                                      |
 |------------------------|------------------|--------------------|----------------|----------------------------------------------|
@@ -83,63 +97,49 @@ No DSP, peak picker, strobe, or solver code is allowed to land without first pas
 | Bass with hammer thump | 0                | 0.0001–0.001       | 21–33          | Transient + low-frequency detection          |
 | Noisy (–18 dB SNR)     | ±3.0             | mid                | 3 per octave   | Real-world robustness                        |
 
-Every cell asserts:
-- Recovered f₀ within **0.25 cent**
-- First 6 partials within **0.5 cent** (parabolic interpolation)
-- Estimated B within **8 %** relative (when B > 0.0005)
-
-The generator (`src/optitune/dsp/synth.py`) + tests (`tests/test_synth.py`) are written **before** any analysis code.
-
-This means the next engineer (DSP + Test pair) can immediately start writing the test matrix in `tests/test_synth.py` and the implementation in `dsp/synth.py`. The Phase 0 skeleton leaves the project in exactly that state: ready for TDD on the synthetic tone contract.
+See `docs/synth_test_matrix.md` and `tests/dsp/test_synth.py` for the full contract.
+Three extreme classical-PFD cases (P2, H1, H2) remain strict xfails until the NMF path (Milestone 3).
 
 ---
 
-## Current Status (Phase 0 — Scaffolding Complete)
+## Architecture notes
 
-- ✅ Clean `uv`-managed `src/` layout
-- ✅ Full `pyproject.toml` with pinned professional dependencies + GPL-3
-- ✅ GPL-3 `LICENSE`
-- ✅ Responsive dark-themed `QMainWindow` with exact required menus
-- ✅ `argparse` in `__main__.py` for `--help`, `--device`, `--a4`
-- ✅ `pytest` + `pytest-qt` skeleton (window instantiation test passes)
-- ✅ `ruff` + `mypy` configs (baseline clean)
-- ✅ `.gitignore`, `launch.sh`, `assets/icon.svg`, `assets/theme.qss`
-- ✅ `README` + living `TODO.md`
-
-**Verification commands** (all must succeed):
-
-```bash
-uv run optitune --help
-uv run pytest
-uv run ruff check
-uv run mypy src/optitune
-```
+- **`AutoRecordController`** stays strictly energy/attack-based — no musical knowledge.
+  All expectation logic lives in `OptiTuneMainWindow` (Milestone 2 will extract it to
+  a Qt-free `scale_session` module).
+- Diagnostics: set `OPTITUNE_DIAG=1` / `full` for verbose `[DIAG]` logs (module loggers).
+  Real-piano runs always emit a machine-readable `SUMMARY:` line on stdout for scripting.
 
 ---
 
-## Roadmap (High Level)
+## Roadmap (high level)
 
-- **Phase 1**: Synthetic tone generator + cent binning + PFD (TDD gate)
-- **Phase 2**: Live audio pipeline + searchable device dialog + loopback self-test
-- **Phase 3**: Live strobe, cents display, spectrum, keyboard — usable daily driver on real piano
-- **Phase 4**: Recording workflow + beat-rate solver
-- **Phase 5**: Persistence, polish, entropy solver skeleton
+See **[`TODO.md`](TODO.md)** for the full milestone checklist. Summary:
 
-See `TODO.md` and `piano_tuner_implementation_spec.md` for the complete contract.
+0. Repo & code-health baseline → `0.2.0`
+1. Low-note estimator robustness (the current blocker) → `0.3.0`
+2. Hands-free workflow productization → `0.4.0`
+3. Solver suite completion (entropy, temperaments, NMF) → `0.5.0`
+4. Visualization & tuning-session UX → `0.6.0`
+5. Persistence & interchange (`.pfg`, EPT import) → `0.7.0`
+6. Architecture & performance hardening → `0.8.0`
+7–8. Packaging, docs, `v1.0.0` release gate
 
 ---
 
 ## Contributing
 
-All contributions must keep the synthetic test matrix green. New DSP or solver work **must** be preceded by failing tests on synthetic tones.
+All contributions must keep the synthetic test matrix green (no new XPASSes on
+strict xfails). New DSP or solver work **must** be preceded by failing tests on
+synthetic tones.
 
-Pull requests are reviewed against the spec and plan.
+Pull requests are reviewed against the spec and `TODO.md`.
 
 ---
 
 ## License
 
-Copyright © 2026 OptiTune Contributors.  
+Copyright © 2026 OptiTune Contributors.
 Released under the **GNU General Public License v3.0 or later**.
 
 See `LICENSE` for the full text.

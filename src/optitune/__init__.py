@@ -7,6 +7,6 @@ live strobe + cents display, and full tuning-curve solvers.
 
 from __future__ import annotations
 
-__version__ = "0.1.0-dev"
+__version__ = "0.2.0"
 __author__ = "OptiTune Contributors"
 __license__ = "GPL-3.0-or-later"

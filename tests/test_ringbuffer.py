@@ -1,7 +1,6 @@
 """Tests for the real-time audio ring buffer (can run with no hardware)."""
 
 import numpy as np
-import pytest
 
 from optitune.audio.ringbuffer import RingBuffer
 

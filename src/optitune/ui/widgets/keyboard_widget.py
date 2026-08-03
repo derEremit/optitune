@@ -11,21 +11,21 @@ from __future__ import annotations
 from enum import Enum
 
 from PySide6.QtCore import QRectF, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPen
+from PySide6.QtGui import QBrush, QColor, QFont, QMouseEvent, QPainter, QPaintEvent, QPen
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 
 class KeyState(Enum):
     UNMEASURED = "unmeasured"
-    MEASURED = "measured"                # blue (white), bright cyan accent (black)
+    MEASURED = "measured"  # blue (white), bright cyan accent (black)
     IN_TUNE = "in_tune"
     NEEDS_ATTENTION = "needs_attention"
-    ARMED = "armed"                      # bright red while waiting for auto-record
-    RECORDING = "recording"              # strong red while actually capturing
+    ARMED = "armed"  # bright red while waiting for auto-record
+    RECORDING = "recording"  # strong red while actually capturing
 
 
 # MIDI range we actually draw (compact 3+ octaves for visibility on screen)
-KEYBOARD_LOW = 48   # C3
+KEYBOARD_LOW = 48  # C3
 KEYBOARD_HIGH = 84  # C6 (inclusive)
 
 
@@ -34,13 +34,13 @@ def midi_to_key_color(midi: int) -> tuple[bool, int]:
     pc = midi % 12
     is_black = pc in (1, 3, 6, 8, 10)
     # white key index within octave (0-6)
-    white_pos = {0:0, 2:1, 4:2, 5:3, 7:4, 9:5, 11:6}[pc] if not is_black else -1
+    white_pos = {0: 0, 2: 1, 4: 2, 5: 3, 7: 4, 9: 5, 11: 6}[pc] if not is_black else -1
     return is_black, white_pos
 
 
 class KeyboardWidget(QWidget):
     """
-    Interactive 88-key keyboard (MIDI 21–108). We render a usable central span.
+    Interactive 88-key keyboard (MIDI 21-108). We render a usable central span.
 
     Public API (stable):
         set_key_state(midi: int, state: KeyState)
@@ -65,7 +65,9 @@ class KeyboardWidget(QWidget):
         # Precompute which MIDI we draw
         self._drawn_midis: list[int] = list(range(KEYBOARD_LOW, KEYBOARD_HIGH + 1))
 
-        self.setToolTip("Piano keyboard — highlighted key shows live detected note (yellow). Click to select (future lock).")
+        self.setToolTip(
+            "Piano keyboard — highlighted key shows live detected note (yellow). Click to select (future lock)."
+        )
 
         # For hit testing
         self._key_rects: dict[int, QRectF] = {}  # midi -> rect (white or black)
@@ -96,7 +98,7 @@ class KeyboardWidget(QWidget):
         pc = midi % 12
         return pc in (1, 3, 6, 8, 10)
 
-    def paintEvent(self, event) -> None:
+    def paintEvent(self, event: QPaintEvent) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
@@ -159,10 +161,7 @@ class KeyboardWidget(QWidget):
             if midi % 12 == 0:
                 painter.setPen(QColor(40, 40, 50))
                 painter.setFont(QFont("DejaVu Sans", 7))
-                painter.drawText(
-                    int(x + 2), int(rect.y() + h - 4),
-                    f"C{midi//12 - 1}"
-                )
+                painter.drawText(int(x + 2), int(rect.y() + h - 4), f"C{midi // 12 - 1}")
 
             white_idx += 1
 
@@ -198,13 +197,13 @@ class KeyboardWidget(QWidget):
             elif state == KeyState.MEASURED:
                 # Make recorded state visible on black keys
                 fill = QColor(45, 55, 75)
-                border = QColor(80, 200, 255)   # bright cyan
+                border = QColor(80, 200, 255)  # bright cyan
             elif state == KeyState.RECORDING:
                 fill = QColor(180, 40, 40)
                 border = QColor(255, 90, 90)
             elif state == KeyState.ARMED:
                 fill = QColor(140, 45, 45)
-                border = QColor(255, 110, 110)   # strong red border for visibility on black
+                border = QColor(255, 110, 110)  # strong red border for visibility on black
             else:
                 fill = QColor(35, 35, 42)
                 border = QColor(20, 20, 25)
@@ -236,11 +235,15 @@ class KeyboardWidget(QWidget):
         cur_txt = ""
         if self._current is not None:
             from optitune.dsp.synth import midi_to_note_name  # local import ok
-            cur_txt = f"  • {midi_to_note_name(self._current)} ({self._current})"
-        painter.drawText(rect.adjusted(2, int(h - 14), 0, 0), Qt.AlignmentFlag.AlignLeft,
-                         f"Keys: Blue=measured, Green=good, Orange=needs attention, Red=recording{cur_txt}")
 
-    def mousePressEvent(self, event) -> None:
+            cur_txt = f"  • {midi_to_note_name(self._current)} ({self._current})"
+        painter.drawText(
+            rect.adjusted(2, int(h - 14), 0, 0),
+            Qt.AlignmentFlag.AlignLeft,
+            f"Keys: Blue=measured, Green=good, Orange=needs attention, Red=recording{cur_txt}",
+        )
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             midi = self._midi_at_pos(event.position().x(), event.position().y())
             if midi is not None:

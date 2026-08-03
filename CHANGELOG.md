@@ -8,6 +8,21 @@ former `TODO.md`, which served as the living changelog during Phases 0–4.
 
 ---
 
+## [0.2.0] — 2026-08-03
+
+Repo & code-health baseline (Milestone 0):
+
+- Ruff + format clean; mypy hard gate green on `src/optitune` (CI no longer
+  soft-fails mypy with `|| true`).
+- Synth matrix xfail drift fixed: only P2/H1/H2 remain strict xfails;
+  recovered rows (P1, S1, S2, C1, C2, C3, B1, N1) fail loudly if they regress.
+  Matrix seeds are deterministic (no `hash()` / `PYTHONHASHSEED` flakiness).
+- `[DIAG]` bare `print()`s in `main_window` / `auto_record` replaced with module
+  loggers; `OPTITUNE_DIAG` still maps to console verbosity. `SUMMARY:` stays on
+  stdout for scripting.
+- README rewritten to match Phases 0–4 done + expectation-driven recording in
+  progress; version bumped to `0.2.0`.
+
 ## [Unreleased] — 2026-05-22 …
 
 Expectation-driven onset detection for scale recording (design doc:

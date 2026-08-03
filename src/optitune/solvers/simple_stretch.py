@@ -3,7 +3,7 @@ Legacy heuristic beat-rate / stretch solver (kept for comparison & fallback).
 
 This was the Phase 4 v0.1 pragmatic solver:
 log-linear B-curve fit from measured keys + simple position/B-dependent
-heuristic stretch + post-correction Shah–Välimäki 1:2 treble rule.
+heuristic stretch + post-correction Shah-Välimäki 1:2 treble rule.
 
 The preferred production implementation is the proper iterative linearized
 weighted beat-rate least-squares solver in `beat_rate.py` (spec §6.2).
@@ -52,7 +52,7 @@ def _default_railsback_curve() -> list[float]:
             curve[i] = -5.5 * (abs(x) ** 1.85)
         else:
             # Treble: progressively sharper
-            curve[i] = 4.2 * (x ** 1.6)
+            curve[i] = 4.2 * (x**1.6)
     curve[A4_IDX] = 0.0
     # Light Shah-like lift in very top
     for i in range(72, N_KEYS):  # from ~C7 upward
@@ -60,9 +60,7 @@ def _default_railsback_curve() -> list[float]:
     return curve
 
 
-def _shah_valimaki_adjust(
-    curve: list[float], b_pred: np.ndarray, midis: np.ndarray
-) -> None:
+def _shah_valimaki_adjust(curve: list[float], b_pred: np.ndarray, midis: np.ndarray) -> None:
     """Enforce Shah & Välimäki 1:2 partial matching rule in the top octave.
 
     For high notes, we bias the target so the upper fundamental approximately
@@ -112,8 +110,7 @@ def compute_heuristic_stretch_curve(piano: Piano) -> list[float]:
             measured.append((k.midi, float(k.measured_b)))
 
     if len(measured) < 3:
-        curve = _default_railsback_curve()
-        return curve
+        return _default_railsback_curve()
 
     # 2. Log-linear fit on measured B(m)
     ms = np.asarray([m for m, _ in measured], dtype=float)
@@ -146,7 +143,7 @@ def compute_heuristic_stretch_curve(piano: Piano) -> list[float]:
             curve[i] = -mag * (abs(x) ** 1.75)
         else:
             mag = 380.0 * math.log10(1.0 + 300.0 * b)
-            curve[i] = mag * (x ** 1.55)
+            curve[i] = mag * (x**1.55)
 
     # 5. Hard pin A4 and smooth a little around center
     curve[A4_IDX] = 0.0
@@ -154,7 +151,7 @@ def compute_heuristic_stretch_curve(piano: Piano) -> list[float]:
         if abs(j - A4_IDX) <= 1:
             curve[j] *= 0.3  # pull neighbors toward zero
 
-    # 6. Apply Shah–Välimäki treble rule (strong in top octave)
+    # 6. Apply Shah-Välimäki treble rule (strong in top octave)
     _shah_valimaki_adjust(curve, b_pred, all_midis)
 
     # Final sanity clip + A4 guarantee

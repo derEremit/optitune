@@ -105,7 +105,9 @@ class DeviceSelectorDialog(QDialog):
         btn_layout.addWidget(self.test_btn)
 
         # Dialog buttons
-        self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
         self.button_box.accepted.connect(self._on_accept)
         self.button_box.rejected.connect(self.reject)
         btn_layout.addWidget(self.button_box)
@@ -113,7 +115,9 @@ class DeviceSelectorDialog(QDialog):
         layout.addLayout(btn_layout)
 
         # Footer hint
-        hint = QLabel("Tip: For best results use a device with low latency. PipeWire/Pulse devices usually work great.")
+        hint = QLabel(
+            "Tip: For best results use a device with low latency. PipeWire/Pulse devices usually work great."
+        )
         hint.setStyleSheet("color:#666; font-size:10px;")
         layout.addWidget(hint)
 
@@ -127,7 +131,9 @@ class DeviceSelectorDialog(QDialog):
             return
 
         if not self._devices:
-            item = QListWidgetItem("No input devices found. Check your sound system (PipeWire/Pulse/ALSA).")
+            item = QListWidgetItem(
+                "No input devices found. Check your sound system (PipeWire/Pulse/ALSA)."
+            )
             item.setFlags(Qt.ItemFlag.NoItemFlags)
             self.device_list.addItem(item)
             return
@@ -136,7 +142,7 @@ class DeviceSelectorDialog(QDialog):
             text = (
                 f"{dev['index']:2d}: {dev['name']}\n"
                 f"     [{dev['hostapi']}]  {dev['default_samplerate']:.0f} Hz   "
-                f"lat≈{dev['input_latency']*1000:.1f} ms   "
+                f"lat≈{dev['input_latency'] * 1000:.1f} ms   "
                 f"{'(default)' if dev['is_default'] else ''}"
             )
             item = QListWidgetItem(text)
@@ -188,7 +194,8 @@ class DeviceSelectorDialog(QDialog):
                     return
             return
 
-        self._select_index(last_idx)
+        if isinstance(last_idx, int):
+            self._select_index(last_idx)
 
     def _select_index(self, idx: int) -> None:
         for i in range(self.device_list.count()):
@@ -208,7 +215,9 @@ class DeviceSelectorDialog(QDialog):
             return
 
         self.test_btn.setEnabled(False)
-        self.test_result_label.setText("Testing... playing tone on output while recording from input (≈2s)")
+        self.test_result_label.setText(
+            "Testing... playing tone on output while recording from input (≈2s)"
+        )
 
         # Run test off the GUI thread so the dialog stays responsive
         def _test_worker() -> None:
@@ -232,7 +241,14 @@ class DeviceSelectorDialog(QDialog):
                 sd.play(tone, samplerate=fs, device=out_dev, blocking=False)
 
                 rec_frames = int(1.6 * fs)
-                rec = sd.rec(rec_frames, samplerate=fs, device=dev["index"], channels=1, dtype="float32", blocking=False)
+                rec = sd.rec(
+                    rec_frames,
+                    samplerate=fs,
+                    device=dev["index"],
+                    channels=1,
+                    dtype="float32",
+                    blocking=False,
+                )
                 sd.wait()  # wait for both
 
                 # Measure dominant frequency -> cents from nominal C4 (261.63 Hz)
@@ -246,7 +262,11 @@ class DeviceSelectorDialog(QDialog):
                     result = f"Test on {dev['name']}: No significant signal detected (peak={peak:.4f}). Check wiring/mic levels."
                 else:
                     sign = "+" if cents > 0 else ""
-                    quality = "excellent" if abs(cents) < 3 else ("good" if abs(cents) < 12 else "weak/offset")
+                    quality = (
+                        "excellent"
+                        if abs(cents) < 3
+                        else ("good" if abs(cents) < 12 else "weak/offset")
+                    )
                     result = (
                         f"Test on {dev['name']}: {sign}{cents:.1f} ¢ from C4  |  "
                         f"peak={peak:.3f} rms={rms:.4f}  ({quality} capture)"
@@ -300,7 +320,9 @@ class DeviceSelectorDialog(QDialog):
     @Slot()
     def _on_accept(self) -> None:
         if self._current_selection is None:
-            QMessageBox.information(self, "No Selection", "Please select an input device from the list.")
+            QMessageBox.information(
+                self, "No Selection", "Please select an input device from the list."
+            )
             return
 
         # Persist

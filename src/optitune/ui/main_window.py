@@ -4,7 +4,7 @@ Professional dark-themed main window for OptiTune.
 Phase 3: Real DSP live analysis integration.
 Phase 4: Recording workflow + basic tuning-curve solver (model + simple stretch).
 - Captures measured f0/B per key via "Record Note / Record Next" (guided or free).
-- Computes minimal Railsback-style stretch curve from measured B values (B-curve fit + heuristic + Shah–Välimäki treble rule).
+- Computes minimal Railsback-style stretch curve from measured B values (B-curve fit + heuristic + Shah-Välimäki treble rule).
 - Live tuner now uses curve targets (when present) instead of pure ET: cents/strobe show deviation from the piano-specific stretch.
 - Simple JSON persistence for the current Piano session.
 - Keyboard paints MEASURED keys in blue; solver results immediately affect live targeting.
@@ -12,10 +12,13 @@ Phase 4: Recording workflow + basic tuning-curve solver (model + simple stretch)
 
 from __future__ import annotations
 
-import numpy as np
+import contextlib
+import logging
 import os
+
+import numpy as np
 from PySide6.QtCore import QSettings, Qt, QTimer, Slot
-from PySide6.QtGui import QAction, QColor, QPalette
+from PySide6.QtGui import QAction, QCloseEvent, QColor, QPalette
 from PySide6.QtWidgets import (
     QDialog,
     QLabel,
@@ -30,12 +33,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from scipy.signal import get_window
-
-# Controllable verbosity for heavy per-tick diagnostics (priority 6)
-# The per-tick [DIAG][ScaleGate] spam (when armed in scale mode) and controller Onset spam
-# are off by default to keep normal runs quiet. Set OPTITUNE_DIAG=1 (or verbose/full)
-# to enable everything. The full-master diagnostic test forces it on.
-_DIAG_VERBOSE = os.environ.get("OPTITUNE_DIAG", "0").lower() in ("1", "true", "yes", "verbose", "full", "on")
 
 from optitune.audio import (
     AudioCapture,
@@ -52,13 +49,12 @@ from optitune.dsp import (
     pfd_estimate_f0_b,
 )
 from optitune.model import Key, Piano
-from optitune.solvers import compute_basic_tuning_curve
 from optitune.recording.auto_record import (
     AutoRecordConfig,
     AutoRecordController,
     AutoRecordEvent,
-    AutoRecordPhase,
 )
+from optitune.solvers import compute_basic_tuning_curve
 from optitune.ui.dialogs import DeviceSelectorDialog
 from optitune.ui.widgets import (
     CentsDisplay,
@@ -67,6 +63,39 @@ from optitune.ui.widgets import (
     StrobeWidget,
 )
 from optitune.ui.widgets.keyboard_widget import KeyState
+
+logger = logging.getLogger(__name__)
+
+# Controllable verbosity for heavy per-tick diagnostics (priority 6)
+# The per-tick [DIAG][ScaleGate] spam (when armed in scale mode) and controller Onset spam
+# are off by default to keep normal runs quiet. Set OPTITUNE_DIAG=1 (or verbose/full)
+# to enable everything. The full-master diagnostic test forces it on.
+# Maps onto the module logger: DIAG on → DEBUG; DIAG off → INFO for key events only.
+_DIAG_VERBOSE = os.environ.get("OPTITUNE_DIAG", "0").lower() in (
+    "1",
+    "true",
+    "yes",
+    "verbose",
+    "full",
+    "on",
+)
+
+
+def _diag(msg: str, *args: object, verbose_only: bool = False) -> None:
+    """Log a [DIAG] line. Key decisions use INFO; per-tick noise is DEBUG when DIAG is on."""
+    if verbose_only and not _DIAG_VERBOSE:
+        return
+    level = logging.DEBUG if verbose_only else logging.INFO
+    logger.log(level, msg, *args)
+
+
+if _DIAG_VERBOSE and not logger.handlers:
+    # OPTITUNE_DIAG maps to visible console diagnostics for interactive / real_piano runs
+    _h = logging.StreamHandler()
+    _h.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(_h)
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
 
 
 class OptiTuneMainWindow(QMainWindow):
@@ -97,7 +126,7 @@ class OptiTuneMainWindow(QMainWindow):
         self._analysis_timer: QTimer | None = None
         self._level_timer: QTimer | None = None
         self._analysis_tick = 0
-        self._last_f0_guess: float = 440.0   # for PFD anchoring across frames
+        self._last_f0_guess: float = 440.0  # for PFD anchoring across frames
 
         # Phase 4: model + recording + curve
         self._last_est: dict | None = None
@@ -115,10 +144,15 @@ class OptiTuneMainWindow(QMainWindow):
         self._auto_advance_after_record: bool = True  # very useful for walking the piano
         self._ignore_onset_until: float = 0.0
         self._require_strong_attack_until: float = 0.0
-        self._scale_pitch_class: int | None = None   # for "scale recording" mode
-        self._scale_gate_grace_until: float = 0.0    # short window after (re)arm where we trust armed intent over noisy early est
-        self._during_capture_rejection_until: float = 0.0  # for during-capture validation + subtle rejection feedback (step 5)
+        self._scale_pitch_class: int | None = None  # for "scale recording" mode
+        self._scale_gate_grace_until: float = (
+            0.0  # short window after (re)arm where we trust armed intent over noisy early est
+        )
+        self._during_capture_rejection_until: float = (
+            0.0  # for during-capture validation + subtle rejection feedback (step 5)
+        )
         self._prev_level_db: float = -60.0
+        self._last_during_cap_check: float = 0.0
         self._curve_status_label: QLabel | None = None
 
         self._setup_theme()
@@ -282,7 +316,9 @@ class OptiTuneMainWindow(QMainWindow):
 
         play_action = QAction("▶ Play Test Tone", self)
         play_action.setShortcut("Ctrl+T")
-        play_action.setToolTip("Play synthetic inharmonic tone and watch live cents/strobe (Phase 3+)")
+        play_action.setToolTip(
+            "Play synthetic inharmonic tone and watch live cents/strobe (Phase 3+)"
+        )
         play_action.triggered.connect(self._on_play_test_tone)
         tb.addAction(play_action)
 
@@ -291,12 +327,16 @@ class OptiTuneMainWindow(QMainWindow):
         # Phase 4 recording controls (user's final-test capability)
         self._record_action = QAction("⏺ Record Note", self)
         self._record_action.setShortcut("Ctrl+R")
-        self._record_action.setToolTip("Record the current live analysis (f0 + B) for the selected or detected key")
+        self._record_action.setToolTip(
+            "Record the current live analysis (f0 + B) for the selected or detected key"
+        )
         self._record_action.triggered.connect(self._on_record_note)
         tb.addAction(self._record_action)
 
         self._record_next_action = QAction("➡️ Record Next", self)
-        self._record_next_action.setToolTip("Auto-advance to next unmeasured key and prepare for recording")
+        self._record_next_action.setToolTip(
+            "Auto-advance to next unmeasured key and prepare for recording"
+        )
         self._record_next_action.triggered.connect(self._on_record_next)
         tb.addAction(self._record_next_action)
 
@@ -318,7 +358,9 @@ class OptiTuneMainWindow(QMainWindow):
         self._auto_advance_action = QAction("➡️ Auto-advance", self)
         self._auto_advance_action.setCheckable(True)
         self._auto_advance_action.setChecked(True)
-        self._auto_advance_action.setToolTip("When ON: after auto-capture, jump to next unmeasured key and re-arm automatically.")
+        self._auto_advance_action.setToolTip(
+            "When ON: after auto-capture, jump to next unmeasured key and re-arm automatically."
+        )
         self._auto_advance_action.toggled.connect(self._update_auto_advance_ui)
         self._update_auto_advance_ui(True)
         tb.addAction(self._auto_advance_action)
@@ -327,7 +369,9 @@ class OptiTuneMainWindow(QMainWindow):
 
         self._compute_action = QAction("📈 Compute Curve", self)
         self._compute_action.setShortcut("Ctrl+K")
-        self._compute_action.setToolTip("Run minimal beat-rate stretch solver on recorded B values → live targets update immediately")
+        self._compute_action.setToolTip(
+            "Run minimal beat-rate stretch solver on recorded B values → live targets update immediately"
+        )
         self._compute_action.triggered.connect(self._on_compute_curve)
         tb.addAction(self._compute_action)
 
@@ -398,7 +442,7 @@ class OptiTuneMainWindow(QMainWindow):
         # 2. Saved preference
         if dev_to_use is None:
             saved = self._settings.value("audio/last_input_device_index", None, type=int)
-            if saved is not None:
+            if isinstance(saved, int):
                 # Validate it still exists as input
                 try:
                     inputs = list_input_devices()
@@ -424,7 +468,9 @@ class OptiTuneMainWindow(QMainWindow):
             self._apply_audio_device(dev_to_use, startup=True)
         else:
             self._device_label.setText("Input: (no input devices found)  ")
-            self.statusBar().showMessage("No audio input devices detected. Use Audio → Input Device... to retry.", 5000)
+            self.statusBar().showMessage(
+                "No audio input devices detected. Use Audio → Input Device... to retry.", 5000
+            )
 
     def _apply_audio_device(self, device_index: int, startup: bool = False) -> None:
         """Stop any running stream, start new one, persist choice, update UI."""
@@ -497,6 +543,7 @@ class OptiTuneMainWindow(QMainWindow):
 
             # New TDD'd auto-record controller (replaces the old ad-hoc flags + logic)
             import time as _time
+
             now = _time.time()
 
             # Compute dB rise for attack detection
@@ -537,7 +584,9 @@ class OptiTuneMainWindow(QMainWindow):
                                 est_midi_for_gate = float(m)
 
                         in_grace = getattr(self, "_scale_gate_grace_until", 0) > now
-                        pc_ok = self._pitch_class_matches_expectation(est_midi_for_gate, scale_pc, tolerance=self.ONSET_GATE_CENT_TOLERANCE)
+                        pc_ok = self._pitch_class_matches_expectation(
+                            est_midi_for_gate, scale_pc, tolerance=self.ONSET_GATE_CENT_TOLERANCE
+                        )
 
                         # Additional robustness for real piano low-note material (seen in long diagnostics):
                         # The live estimator often reports harmonics or octaves (e.g. 27 or 48 when armed on C1=24).
@@ -546,31 +595,48 @@ class OptiTuneMainWindow(QMainWindow):
                         # This is still pure expectation logic (the armed target *is* the expectation).
                         # The strict commit-time gate with fresh analysis remains the final filter.
                         armed = self._record_selected_midi
-                        close_to_armed = False
-                        if armed is not None and est_midi_for_gate is not None:
-                            if abs(est_midi_for_gate - armed) <= 20:  # ~2 octaves tolerance for estimator weaknesses on real low notes
-                                close_to_armed = True
+                        # ~2 octaves tolerance for estimator weaknesses on real low notes
+                        close_to_armed = (
+                            armed is not None
+                            and est_midi_for_gate is not None
+                            and abs(est_midi_for_gate - armed) <= 20
+                        )
 
                         if not pc_ok and not in_grace and not close_to_armed:
                             # Hard rejection for this tick — do not let the energy-based controller see it.
-                            if _DIAG_VERBOSE:
-                                print(f"[DIAG][ScaleGate] SUPPRESSED (wrong pitch class) | est_midi_approx={est_midi_for_gate} expected_pc={scale_pc} dB={db:.1f}")
+                            _diag(
+                                "[DIAG][ScaleGate] SUPPRESSED (wrong pitch class) | "
+                                "est_midi_approx=%s expected_pc=%s dB=%.1f",
+                                est_midi_for_gate,
+                                scale_pc,
+                                db,
+                                verbose_only=True,
+                            )
                             event = None
                         else:
                             if (in_grace or close_to_armed) and not pc_ok:
-                                if _DIAG_VERBOSE:
-                                    reason = "GRACE" if in_grace else "close_to_armed"
-                                    print(f"[DIAG][ScaleGate] {reason} allowed (armed intent) | est_midi_approx={est_midi_for_gate} armed={armed} dB={db:.1f}")
+                                reason = "GRACE" if in_grace else "close_to_armed"
+                                _diag(
+                                    "[DIAG][ScaleGate] %s allowed (armed intent) | "
+                                    "est_midi_approx=%s armed=%s dB=%.1f",
+                                    reason,
+                                    est_midi_for_gate,
+                                    armed,
+                                    db,
+                                    verbose_only=True,
+                                )
                             event = self._auto_record_ctrl.on_level_tick(db, now)
                     else:
                         event = self._auto_record_ctrl.on_level_tick(db, now)
 
             if event == AutoRecordEvent.ONSET_CONFIRMED:
-                print(f"[DIAG] ONSET CONFIRMED | dB={db:.1f} rise={db_rise:.1f} strong_req={require_strong}")
+                _diag(
+                    f"[DIAG] ONSET CONFIRMED | dB={db:.1f} rise={db_rise:.1f} strong_req={require_strong}"
+                )
                 self._on_auto_onset_confirmed()
 
             elif event == AutoRecordEvent.CAPTURE_FINISHED:
-                print(f"[DIAG] CAPTURE FINISHED | target={self._record_selected_midi}")
+                _diag(f"[DIAG] CAPTURE FINISHED | target={self._record_selected_midi}")
                 self._finish_auto_capture(commit=True)
 
             # --- During-capture validation + subtle rejection feedback (priority 5) ---
@@ -583,42 +649,58 @@ class OptiTuneMainWindow(QMainWindow):
             #     e.g. brief flash on the armed key or status message)
             # We do *not* abort the capture here (keeps controller pure); the strong
             # commit-time gate in _decide_commit_and_maybe_switch remains the final authority.
-            if (self._auto_record_ctrl.is_recording and
-                    getattr(self, "_scale_pitch_class", None) is not None and
-                    self._record_selected_midi is not None and
-                    self._last_est is not None):
+            if (
+                self._auto_record_ctrl.is_recording
+                and self._scale_pitch_class is not None
+                and self._record_selected_midi is not None
+                and self._last_est is not None
                 # Throttle to keep logs reasonable (~3x per second max)
-                if not hasattr(self, "_last_during_cap_check") or (now - getattr(self, "_last_during_cap_check", 0)) > 0.32:
-                    self._last_during_cap_check = now
-                    est_m = self._last_est.get("midi")
-                    if est_m is not None:
-                        armed = self._record_selected_midi
-                        scale_pc = self._scale_pitch_class
+                and (now - self._last_during_cap_check) > 0.32
+            ):
+                self._last_during_cap_check = now
+                est_m = self._last_est.get("midi")
+                if est_m is not None:
+                    armed = self._record_selected_midi
+                    scale_pc = self._scale_pitch_class
 
-                        # Class check (same fuzzy logic as onset gate)
-                        class_ok = self._pitch_class_matches_expectation(float(est_m), scale_pc)
+                    # Class check (same fuzzy logic as onset gate)
+                    class_ok = self._pitch_class_matches_expectation(float(est_m), scale_pc)
 
-                        # Target tolerance check (same 140¢ used at commit)
-                        target_err = self._cents_error_to_target(self._last_est.get("f_est", est_m), armed)
-                        target_ok = target_err is None or abs(target_err) <= self.SCALE_MODE_CENT_TOLERANCE
+                    # Target tolerance check (same 140¢ used at commit)
+                    target_err = self._cents_error_to_target(
+                        self._last_est.get("f_est", est_m), armed
+                    )
+                    target_ok = (
+                        target_err is None or abs(target_err) <= self.SCALE_MODE_CENT_TOLERANCE
+                    )
 
-                        # During capture we are more tolerant of the estimator's known weaknesses
-                        # on real low piano notes (octave jumps, strong partials). We still log
-                        # when it's clearly wrong so we have data for future improvements, but we
-                        # avoid spamming the rejection window on every decay frame.
-                        close_to_armed = armed is not None and abs(est_m - armed) <= 15
-                        if (not class_ok or not target_ok) and not close_to_armed:
-                            octave_err = self._is_probable_octave_or_partial_error(armed, est_m)
-                            tag = " (probable octave/partial error)" if octave_err else ""
-                            print(f"[DIAG][DuringCapture] REJECT during window{tag} | armed={armed} "
-                                  f"scale_pc={scale_pc} live_midi≈{est_m} class_ok={class_ok} "
-                                  f"target_err={target_err:.1f}¢" if target_err is not None else "")
-                            # Set short rejection window for subtle feedback (UI can poll this)
-                            self._during_capture_rejection_until = now + 0.4
-                        else:
-                            # Good — optionally log stable periods at lower frequency (debug only)
-                            if abs(est_m - armed) > 1.5 and (int(now * 10) % 8 == 0):
-                                print(f"[DIAG][DuringCapture] OK but drifting | armed={armed} live≈{est_m}")
+                    # During capture we are more tolerant of the estimator's known weaknesses
+                    # on real low piano notes (octave jumps, strong partials). We still log
+                    # when it's clearly wrong so we have data for future improvements, but we
+                    # avoid spamming the rejection window on every decay frame.
+                    close_to_armed = armed is not None and abs(est_m - armed) <= 15
+                    if (not class_ok or not target_ok) and not close_to_armed:
+                        octave_err = self._is_probable_octave_or_partial_error(armed, est_m)
+                        tag = " (probable octave/partial error)" if octave_err else ""
+                        err_str = f"{target_err:.1f}" if target_err is not None else "n/a"
+                        _diag(
+                            "[DIAG][DuringCapture] REJECT during window%s | armed=%s "
+                            "scale_pc=%s live_midi≈%s class_ok=%s target_err=%s¢",
+                            tag,
+                            armed,
+                            scale_pc,
+                            est_m,
+                            class_ok,
+                            err_str,
+                        )
+                        # Set short rejection window for subtle feedback (UI can poll this)
+                        self._during_capture_rejection_until = now + 0.4
+                    else:
+                        # Good — optionally log stable periods at lower frequency (debug only)
+                        if abs(est_m - armed) > 1.5 and (int(now * 10) % 8 == 0):
+                            _diag(
+                                f"[DIAG][DuringCapture] OK but drifting | armed={armed} live≈{est_m}"
+                            )
 
             # Keep the forced red state fresh at the fast level-meter rate (50 ms)
             self._apply_auto_record_visual_force()
@@ -731,7 +813,7 @@ class OptiTuneMainWindow(QMainWindow):
         if self._piano is not None:
             off = self._piano.get_target_offset(midi)
             if abs(off) > 0.01:
-                return base * (2.0 ** (off / 1200.0))
+                return float(base * (2.0 ** (off / 1200.0)))
         return base
 
     def _estimate_pitch(self, audio: np.ndarray, fs: float, a4: float) -> dict:
@@ -756,9 +838,7 @@ class OptiTuneMainWindow(QMainWindow):
         freqs = np.fft.rfftfreq(n, 1.0 / fs)
 
         # Find refined peaks (exactly as validated in Phase 1 matrix)
-        peak_fs, peak_as = find_spectral_peaks(
-            freqs, power, min_prominence_db=14.0, max_peaks=25
-        )
+        peak_fs, peak_as = find_spectral_peaks(freqs, power, min_prominence_db=14.0, max_peaks=25)
 
         f0 = 440.0
         B = 0.0003
@@ -782,10 +862,7 @@ class OptiTuneMainWindow(QMainWindow):
             # more "theoretically correct" PFD value; otherwise fall back to the reliable low peak.
             if f_low > 20 and f0_pfd > 20:
                 dc = 1200.0 * np.log2(f0_pfd / f_low)
-                if abs(dc) < 35.0:
-                    f0 = f0_pfd
-                else:
-                    f0 = f_low
+                f0 = f0_pfd if abs(dc) < 35.0 else f_low
             else:
                 f0 = f_low
 
@@ -798,7 +875,7 @@ class OptiTuneMainWindow(QMainWindow):
 
         # Map to nearest piano key using current A4 (ET for the estimator itself)
         midi_f = hz_to_midi(f_est, a4)
-        midi = int(round(midi_f))
+        midi = round(midi_f)
         midi = max(21, min(108, midi))
 
         target_hz = midi_to_hz(midi, a4)
@@ -821,28 +898,52 @@ class OptiTuneMainWindow(QMainWindow):
             "cents": float(cents),
             "delta_hz": float(delta_hz),
             "f_dom": f_dom,
-            "b": float(B),   # Phase 4: inharmonicity for the solver
+            "b": float(B),  # Phase 4: inharmonicity for the solver
         }
 
     def _fallback_estimate(self, audio: np.ndarray, fs: float, a4: float) -> dict:
         """Very cheap fallback (used only on tiny buffers)."""
         if len(audio) < 256:
-            return {"f_est": 440.0, "midi": 69, "target_hz": a4, "cents": 0.0, "delta_hz": 0.0, "f0": 440.0, "b": 0.0003}
+            return {
+                "f_est": 440.0,
+                "midi": 69,
+                "target_hz": a4,
+                "cents": 0.0,
+                "delta_hz": 0.0,
+                "f0": 440.0,
+                "b": 0.0003,
+            }
         win = np.hanning(len(audio))
         spec = np.abs(np.fft.rfft(audio * win))
         freqs = np.fft.rfftfreq(len(audio), 1.0 / fs)
         mask = (freqs > 50) & (freqs < 4000)
         if not np.any(mask):
-            return {"f_est": 440.0, "midi": 69, "target_hz": a4, "cents": 0.0, "delta_hz": 0.0, "f0": 440.0, "b": 0.0003}
+            return {
+                "f_est": 440.0,
+                "midi": 69,
+                "target_hz": a4,
+                "cents": 0.0,
+                "delta_hz": 0.0,
+                "f0": 440.0,
+                "b": 0.0003,
+            }
         idxs = np.where(mask)[0]
         peak = int(np.argmax(spec[idxs]))
         f = float(freqs[idxs[peak]])
         midi_f = hz_to_midi(f, a4)
-        midi = int(round(midi_f))
+        midi = round(midi_f)
         target = midi_to_hz(midi, a4)
         cents = 1200.0 * np.log2(max(f, 1) / max(target, 1)) if target > 1 else 0.0
         delta = f - target
-        return {"f_est": f, "midi": midi, "target_hz": target, "cents": cents, "delta_hz": delta, "f0": f, "b": 0.0003}
+        return {
+            "f_est": f,
+            "midi": midi,
+            "target_hz": target,
+            "cents": cents,
+            "delta_hz": delta,
+            "f0": f,
+            "b": 0.0003,
+        }
 
     def _update_spectrum_from_audio(self, audio: np.ndarray, fs: float, detected_f: float) -> None:
         """Feed the (now real) SpectrumWidget a usable view + marker."""
@@ -853,7 +954,7 @@ class OptiTuneMainWindow(QMainWindow):
             w = np.hanning(n)
             spec = np.abs(np.fft.rfft(audio[-n:] * w))
             freqs = np.fft.rfftfreq(n, 1.0 / fs)
-            power = spec ** 2
+            power = spec**2
             step = max(1, len(freqs) // 600)
             self.spectrum.update_frame(freqs[::step], power[::step])
             self.spectrum.set_detected_pitch(float(detected_f))
@@ -886,7 +987,9 @@ class OptiTuneMainWindow(QMainWindow):
         "set RECORDING then immediately MEASURED" synchronous flash.
         """
         if self._last_est is None:
-            QMessageBox.information(self, "Record", "No live analysis yet. Play a note on the piano first.")
+            QMessageBox.information(
+                self, "Record", "No live analysis yet. Play a note on the piano first."
+            )
             return
 
         piano = self._ensure_piano()
@@ -926,10 +1029,16 @@ class OptiTuneMainWindow(QMainWindow):
         does the right thing: it strongly prefers the next octave of the same
         note class before falling back to generic ascending or the old heuristic.
         """
-        print(f"[DIAG][AutoAdvance] _on_record_next called | last_recorded={getattr(self, '_last_recorded_midi', None)} | scale_class={self._scale_pitch_class}")
+        _diag(
+            f"[DIAG][AutoAdvance] _on_record_next called | last_recorded={getattr(self, '_last_recorded_midi', None)} | scale_class={self._scale_pitch_class}"
+        )
         piano = self._ensure_piano()
         last = getattr(self, "_last_recorded_midi", None)
-        current = self._record_selected_midi or last or (self._last_est.get("midi", 60) if self._last_est else 60)
+        current = (
+            self._record_selected_midi
+            or last
+            or (self._last_est.get("midi", 60) if self._last_est else 60)
+        )
 
         def is_unmeasured(m: int) -> bool:
             if not (21 <= m <= 108):
@@ -959,8 +1068,10 @@ class OptiTuneMainWindow(QMainWindow):
             # already flipped _scale_pitch_class if the musician just played the first
             # note of the other known series (C↔F). If we are still here with the old class,
             # either the user stopped or they are starting something outside the known pair.
-            print(f"[DIAG][AutoAdvance] Scale series for pc={self._scale_pitch_class} exhausted "
-                  f"(last={last}). Will use fallback or wait for commit-time switch on next capture.")
+            _diag(
+                f"[DIAG][AutoAdvance] Scale series for pc={self._scale_pitch_class} exhausted "
+                f"(last={last}). Will use fallback or wait for commit-time switch on next capture."
+            )
             # We deliberately do *not* clear _scale_pitch_class here — the next successful
             # capture of a note in the other known class will perform the eager switch.
             # Manual disarm or arming a different target is the explicit way to leave scale mode.
@@ -970,7 +1081,7 @@ class OptiTuneMainWindow(QMainWindow):
         # Simple ascending from current (still useful)
         for candidate in range(current + 1, 109):
             if is_unmeasured(candidate):
-                print(f"[DIAG][AutoAdvance] Chose via fallback ascending: {candidate}")
+                _diag(f"[DIAG][AutoAdvance] Chose via fallback ascending: {candidate}")
                 self._record_selected_midi = candidate
                 self.keyboard.set_current_key(candidate)
                 self.statusBar().showMessage(
@@ -980,7 +1091,9 @@ class OptiTuneMainWindow(QMainWindow):
                 return
 
         # Old broad heuristic as last resort
-        candidates = list(range(48, 85)) + list(range(36, 48)) + list(range(85, 109)) + list(range(21, 36))
+        candidates = (
+            list(range(48, 85)) + list(range(36, 48)) + list(range(85, 109)) + list(range(21, 36))
+        )
         for m in candidates:
             if is_unmeasured(m):
                 self._record_selected_midi = m
@@ -1001,7 +1114,9 @@ class OptiTuneMainWindow(QMainWindow):
 
     def _toggle_auto_record_arm(self, checked: bool) -> None:
         """User clicks the big Arm button. Delegates to the TDD'd controller."""
-        target = self._record_selected_midi or (self._last_est.get("midi") if self._last_est else None)
+        target = self._record_selected_midi or (
+            self._last_est.get("midi") if self._last_est else None
+        )
 
         if checked:
             self._auto_record_ctrl.arm(target)
@@ -1012,8 +1127,13 @@ class OptiTuneMainWindow(QMainWindow):
             if getattr(self, "_auto_advance_after_record", True) and target is not None:
                 self._scale_pitch_class = int(target) % 12
                 import time as _t
-                self._scale_gate_grace_until = _t.time() + 0.65  # grace for transient est on real piano attacks
-                print(f"[DIAG][ScaleGate] Entered scale mode for pitch class {self._scale_pitch_class} (armed on {target})")
+
+                self._scale_gate_grace_until = (
+                    _t.time() + 0.65
+                )  # grace for transient est on real piano attacks
+                _diag(
+                    f"[DIAG][ScaleGate] Entered scale mode for pitch class {self._scale_pitch_class} (armed on {target})"
+                )
 
             target_str = f"{target} ({midi_to_note_name(target)})" if target else "any note"
             self._arm_record_action.setText("⏹ Stop Arming")
@@ -1038,7 +1158,7 @@ class OptiTuneMainWindow(QMainWindow):
                     "1. Click the target key on screen (or use Record Next).\n"
                     "2. Play the physical note on your piano.\n"
                     "3. The key will be red while armed. The software will auto-detect the sound and record ~1.8s.\n\n"
-                    "If Auto-advance is ON, it will move to the next key and re-arm after capture."
+                    "If Auto-advance is ON, it will move to the next key and re-arm after capture.",
                 )
                 self._shown_arm_help = True
 
@@ -1048,7 +1168,7 @@ class OptiTuneMainWindow(QMainWindow):
 
             # Layer 1: leaving scale mode when the user explicitly stops arming
             self._scale_pitch_class = None
-            print("[DIAG][ScaleGate] Exited scale mode (manual disarm)")
+            _diag("[DIAG][ScaleGate] Exited scale mode (manual disarm)")
 
             # Revert visual state for the (ex-)target
             if target:
@@ -1077,7 +1197,9 @@ class OptiTuneMainWindow(QMainWindow):
         )
 
         self.keyboard.set_current_key(target)
-        self.keyboard.set_key_state(target, KeyState.RECORDING)  # strong red for the whole capture window
+        self.keyboard.set_key_state(
+            target, KeyState.RECORDING
+        )  # strong red for the whole capture window
         self._apply_auto_record_visual_force()
 
         # Reset any previous during-capture rejection state for the new capture window (step 5)
@@ -1100,13 +1222,16 @@ class OptiTuneMainWindow(QMainWindow):
         are stored and allowed to advance the series.
         """
         import time as _time
+
         if not commit:
             self.statusBar().showMessage("Auto-record cancelled.", 1500)
             self._auto_record_ctrl.disarm()
             return
 
         if self._last_est is None:
-            self.statusBar().showMessage("Auto-record finished but no analysis data. Try again.", 3000)
+            self.statusBar().showMessage(
+                "Auto-record finished but no analysis data. Try again.", 3000
+            )
             self._auto_record_ctrl.disarm()
             return
 
@@ -1116,9 +1241,9 @@ class OptiTuneMainWindow(QMainWindow):
             # Reject: do NOT store, do NOT advance. Stay armed on the same target
             # so the user can immediately try again.
             target = self._record_selected_midi
-            print(f"[DIAG][AutoCapture] Capture REJECTED — staying armed on {target}")
+            _diag(f"[DIAG][AutoCapture] Capture REJECTED — staying armed on {target}")
             self.statusBar().showMessage(
-                f"Capture rejected (wrong note for current series/target). Try again.", 2500
+                "Capture rejected (wrong note for current series/target). Try again.", 2500
             )
 
             # Give the user a moment and require a clean new attack
@@ -1133,6 +1258,7 @@ class OptiTuneMainWindow(QMainWindow):
                 self.keyboard.set_current_key(target)
                 self._apply_auto_record_visual_force()
                 import time as _t
+
                 self._scale_gate_grace_until = _t.time() + 0.5  # allow quick retry
             self._during_capture_rejection_until = 0.0
             return
@@ -1153,12 +1279,13 @@ class OptiTuneMainWindow(QMainWindow):
             self._on_record_next()
             next_midi = self._record_selected_midi
             if next_midi:
-                print(f"[DIAG][AutoAdvance] Re-armed via _on_record_next → {next_midi}")
+                _diag(f"[DIAG][AutoAdvance] Re-armed via _on_record_next → {next_midi}")
                 self._auto_record_ctrl.arm(next_midi)
                 self.keyboard.set_key_state(next_midi, KeyState.ARMED)
                 self.keyboard.set_current_key(next_midi)
                 self._apply_auto_record_visual_force()
                 import time as _t
+
                 self._scale_gate_grace_until = _t.time() + 0.65
 
             self._arm_record_action.setChecked(True)
@@ -1174,7 +1301,9 @@ class OptiTuneMainWindow(QMainWindow):
             self._ignore_onset_until = now + 0.3
         else:
             self._auto_record_ctrl.disarm()
-            self.statusBar().showMessage("Auto-captured. Arm again when ready for the next note.", 4000)
+            self.statusBar().showMessage(
+                "Auto-captured. Arm again when ready for the next note.", 4000
+            )
             now = _time.time()
             self._ignore_onset_until = now + 0.3
             self._require_strong_attack_until = now + 0.5
@@ -1190,7 +1319,9 @@ class OptiTuneMainWindow(QMainWindow):
     # fresh estimator) still uses the strict SCALE tolerance + class check.
     ONSET_GATE_CENT_TOLERANCE = 800.0
 
-    def _pitch_class_matches_expectation(self, est_midi_f: float | None, expected_pc: int, *, tolerance: float | None = None) -> bool:
+    def _pitch_class_matches_expectation(
+        self, est_midi_f: float | None, expected_pc: int, *, tolerance: float | None = None
+    ) -> bool:
         """
         Return True if the estimated continuous MIDI value is within
         the given tolerance (default: SCALE_MODE_CENT_TOLERANCE) cents of a note
@@ -1201,7 +1332,9 @@ class OptiTuneMainWindow(QMainWindow):
         Commit-time validation always uses the strict default.
         """
         if est_midi_f is None:
-            return False  # conservative: if we have no estimate, don't trust the onset in scale mode
+            return (
+                False  # conservative: if we have no estimate, don't trust the onset in scale mode
+            )
 
         try:
             f_est = self._last_est.get("f_est") if self._last_est else None
@@ -1215,7 +1348,7 @@ class OptiTuneMainWindow(QMainWindow):
 
         # Find the closest note (in cents) whose MIDI % 12 == expected_pc
         # Search a couple of octaves around the observation
-        base = int(round(midi_f))
+        base = round(midi_f)
         best_dist = 9999.0
         for oct_off in (-2, -1, 0, 1, 2):
             for delta in (-12, 0, 12):
@@ -1265,28 +1398,35 @@ class OptiTuneMainWindow(QMainWindow):
             f_est = live.get("f_est") or live.get("f0")
             captured_midi = live.get("midi")
             est_source = "live (stale fallback)"
-            print("[DIAG][CommitDecision] WARNING: no fresh estimate, falling back to live _last_est")
+            _diag(
+                "[DIAG][CommitDecision] WARNING: no fresh estimate, falling back to live _last_est"
+            )
         else:
-            print("[DIAG][CommitDecision] REJECT: no usable pitch estimate (fresh or live) at capture end")
+            _diag(
+                "[DIAG][CommitDecision] REJECT: no usable pitch estimate (fresh or live) at capture end"
+            )
             return False
 
         if f_est is None or captured_midi is None:
-            print("[DIAG][CommitDecision] REJECT: incomplete estimate at capture end")
+            _diag("[DIAG][CommitDecision] REJECT: incomplete estimate at capture end")
             return False
 
         captured_pc = int(captured_midi) % 12
         current_scale_pc = getattr(self, "_scale_pitch_class", None)
 
         # 1. Pitch-class check when in scale mode
-        if current_scale_pc is not None:
-            if not self._pitch_class_matches_expectation(float(captured_midi), current_scale_pc):
-                err_cents = self._cents_error_to_target(f_est, armed) if armed else 999.0
-                octave_err = self._is_probable_octave_or_partial_error(armed, captured_midi)
-                tag = " (probable octave/partial error)" if octave_err else ""
-                print(f"[DIAG][CommitDecision] REJECT (wrong class at commit){tag} | "
-                      f"source={est_source} captured_pc={captured_pc} expected_pc={current_scale_pc} "
-                      f"armed={armed} err_to_target={err_cents:.1f}¢ f_est={f_est:.1f}")
-                return False
+        if current_scale_pc is not None and not self._pitch_class_matches_expectation(
+            float(captured_midi), current_scale_pc
+        ):
+            err_cents = self._cents_error_to_target(f_est, armed) if armed else 999.0
+            octave_err = self._is_probable_octave_or_partial_error(armed, captured_midi)
+            tag = " (probable octave/partial error)" if octave_err else ""
+            _diag(
+                f"[DIAG][CommitDecision] REJECT (wrong class at commit){tag} | "
+                f"source={est_source} captured_pc={captured_pc} expected_pc={current_scale_pc} "
+                f"armed={armed} err_to_target={err_cents:.1f}¢ f_est={f_est:.1f}"
+            )
+            return False
 
         # 2. Tolerance check against the armed target (the thing the user intended to record)
         if armed is not None:
@@ -1294,30 +1434,37 @@ class OptiTuneMainWindow(QMainWindow):
             if err is not None and abs(err) > self.SCALE_MODE_CENT_TOLERANCE:
                 octave_err = self._is_probable_octave_or_partial_error(armed, f_est)
                 tag = " (probable octave/partial error)" if octave_err else ""
-                print(f"[DIAG][CommitDecision] REJECT (too far from armed target){tag} | "
-                      f"source={est_source} armed={armed} ({midi_to_note_name(armed)}) "
-                      f"captured≈{captured_midi} error={err:.1f}¢ > {self.SCALE_MODE_CENT_TOLERANCE}¢ f_est={f_est:.1f}")
+                _diag(
+                    f"[DIAG][CommitDecision] REJECT (too far from armed target){tag} | "
+                    f"source={est_source} armed={armed} ({midi_to_note_name(armed)}) "
+                    f"captured≈{captured_midi} error={err:.1f}¢ > {self.SCALE_MODE_CENT_TOLERANCE}¢ f_est={f_est:.1f}"
+                )
                 return False
 
         # Accept
-        class_ok = (current_scale_pc is None or
-                    self._pitch_class_matches_expectation(float(captured_midi), current_scale_pc))
-        print(f"[DIAG][CommitDecision] ACCEPT | source={est_source} armed={armed} "
-              f"captured≈{captured_midi} class_ok={class_ok}")
+        class_ok = current_scale_pc is None or self._pitch_class_matches_expectation(
+            float(captured_midi), current_scale_pc
+        )
+        _diag(
+            f"[DIAG][CommitDecision] ACCEPT | source={est_source} armed={armed} "
+            f"captured≈{captured_midi} class_ok={class_ok}"
+        )
 
         # Extra diagnostic: show how much the fresh estimate differed from the live one
         if fresh and live and est_source.startswith("fresh"):
             live_f = live.get("f_est") or live.get("f0")
             if live_f:
                 diff_cents = 1200.0 * np.log2(f_est / max(live_f, 1))
-                print(f"[DIAG][CommitDecision] fresh vs live diff = {diff_cents:+.1f}¢")
+                _diag(f"[DIAG][CommitDecision] fresh vs live diff = {diff_cents:+.1f}¢")
 
         # 3. Series switch at commit time (eager, single-note trigger, only for the known C/F pair)
         self._maybe_switch_series(captured_pc, current_scale_pc, captured_midi)
 
         return True
 
-    def _maybe_switch_series(self, captured_pc: int, current_scale_pc: int | None, captured_midi: int | float) -> None:
+    def _maybe_switch_series(
+        self, captured_pc: int, current_scale_pc: int | None, captured_midi: int | float
+    ) -> None:
         """
         Eager series switch at commit time.
 
@@ -1336,18 +1483,25 @@ class OptiTuneMainWindow(QMainWindow):
         other = 5 if current_scale_pc == 0 else 0
         if captured_pc == other:
             self._scale_pitch_class = captured_pc
-            print(f"[DIAG][CommitDecision] Series SWITCHED to pitch class {captured_pc} "
-                  f"based on captured note {captured_midi}")
+            _diag(
+                f"[DIAG][CommitDecision] Series SWITCHED to pitch class {captured_pc} "
+                f"based on captured note {captured_midi}"
+            )
             # Give the new series the same short grace as a fresh arm (helps first note of the new series)
             import time as _t
+
             self._scale_gate_grace_until = _t.time() + 0.65
         else:
             # Future-proof: we saw activity from a third class while in a known series.
             # Do not auto-switch; just log so we can decide later behavior.
-            print(f"[DIAG][CommitDecision] Series switch opportunity ignored (unexpected class {captured_pc}, "
-                  f"current series {current_scale_pc}) for note {captured_midi}")
+            _diag(
+                f"[DIAG][CommitDecision] Series switch opportunity ignored (unexpected class {captured_pc}, "
+                f"current series {current_scale_pc}) for note {captured_midi}"
+            )
 
-    def _is_probable_octave_or_partial_error(self, armed_midi: int | None, est_midi_f: float | None) -> bool:
+    def _is_probable_octave_or_partial_error(
+        self, armed_midi: int | None, est_midi_f: float | None
+    ) -> bool:
         """
         Heuristic to detect the common failure mode seen in long diagnostics on real
         low piano notes: the estimator locking onto a strong upper partial or octave
@@ -1381,7 +1535,7 @@ class OptiTuneMainWindow(QMainWindow):
             target_hz = midi_to_hz(int(target_midi), self._initial_a4)
             if target_hz <= 1:
                 return None
-            return 1200.0 * np.log2(f_est / target_hz)
+            return float(1200.0 * np.log2(f_est / target_hz))
         except Exception:
             return None
 
@@ -1405,13 +1559,13 @@ class OptiTuneMainWindow(QMainWindow):
 
             # Quick energy check — if it's basically silence we shouldn't trust it
             rms = float(np.sqrt(np.mean(audio * audio)))
-            if rms < 0.0008:   # very quiet, probably decay or noise
+            if rms < 0.0008:  # very quiet, probably decay or noise
                 return None
 
             est = self._estimate_pitch(audio, fs, self._initial_a4)
             return est
         except Exception as e:
-            print(f"[DIAG][FreshEst] commit-time fresh analysis failed: {e}")
+            _diag(f"[DIAG][FreshEst] commit-time fresh analysis failed: {e}")
             return None
 
     def _on_compute_curve(self) -> None:
@@ -1423,7 +1577,7 @@ class OptiTuneMainWindow(QMainWindow):
                 self,
                 "Compute Curve",
                 "No measurements yet — computing a default Railsback-style stretch curve (usable ET + stretch).\n\n"
-                "For best results on your real piano, record 8–12 keys first (B values drive the fit).",
+                "For best results on your real piano, record 8-12 keys first (B values drive the fit).",
             )
 
         try:
@@ -1496,10 +1650,9 @@ class OptiTuneMainWindow(QMainWindow):
     def _save_persisted_piano(self) -> None:
         if self._piano is None:
             return
-        try:
+        # never let persistence kill the app
+        with contextlib.suppress(Exception):
             self._piano.save_json(Piano.default_persist_path())
-        except Exception:
-            pass  # never let persistence kill the app
 
     # ---------------- Menu / toolbar handlers (updated for Phase 4) ----------------
 
@@ -1546,7 +1699,9 @@ class OptiTuneMainWindow(QMainWindow):
             self._update_curve_status()
             QMessageBox.information(self, "Open", f"Loaded session from {path}")
         else:
-            QMessageBox.information(self, "Open", "No saved session found (auto-saved on every record).")
+            QMessageBox.information(
+                self, "Open", "No saved session found (auto-saved on every record)."
+            )
 
     @Slot()
     def _on_save(self) -> None:
@@ -1563,10 +1718,8 @@ class OptiTuneMainWindow(QMainWindow):
     @Slot()
     def _on_about(self) -> None:
         ver = "0.4"
-        try:
+        with contextlib.suppress(Exception):
             ver = __import__("optitune").__version__
-        except Exception:
-            pass
         QMessageBox.about(
             self,
             "About OptiTune",
@@ -1575,7 +1728,7 @@ class OptiTuneMainWindow(QMainWindow):
             Built with PySide6, pyqtgraph, sounddevice, NumPy/SciPy/Numba.<br>
             100% test-driven with synthetic inharmonic piano tones (Fletcher-Young + PFD).<br><br>
             <b>Phase 4:</b> Record notes from your real detuned piano → minimal B-curve + stretch solver → live tuner targets the computed curve.<br>
-            Final user test: capture 8–12 keys, Compute Curve, tune to the resulting per-key targets.<br><br>
+            Final user test: capture 8-12 keys, Compute Curve, tune to the resulting per-key targets.<br><br>
             © 2026 OptiTune Contributors — Licensed under the GNU GPL v3.<br>
             <a href="https://github.com/z3n/optitune">github.com/z3n/optitune</a>
             """,
@@ -1611,20 +1764,20 @@ class OptiTuneMainWindow(QMainWindow):
         self._auto_advance_after_record = checked
         if checked:
             self._auto_advance_action.setText("➡️ Auto-advance ON")
-            self._auto_advance_action.setToolTip("ON: After auto-capture, jump to next unmeasured key and re-arm automatically (great for walking the piano).")
+            self._auto_advance_action.setToolTip(
+                "ON: After auto-capture, jump to next unmeasured key and re-arm automatically (great for walking the piano)."
+            )
         else:
             self._auto_advance_action.setText("Auto-advance OFF")
             self._auto_advance_action.setToolTip("OFF: You control which key to target next.")
 
     # Graceful shutdown
-    def closeEvent(self, event: object) -> None:
-        try:
+    def closeEvent(self, event: QCloseEvent) -> None:
+        with contextlib.suppress(Exception):
             if self._level_timer:
                 self._level_timer.stop()
             if self._analysis_timer:
                 self._analysis_timer.stop()
             self.audio_capture.stop()
             self._save_persisted_piano()
-        except Exception:
-            pass
         super().closeEvent(event)

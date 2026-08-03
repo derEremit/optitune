@@ -5,6 +5,7 @@ OptiTune command-line entry point and GUI launcher.
 `uv run optitune` (or `optitune` after install) launches the responsive dark GUI shell.
 Phase 1 adds the `generate-tone` subcommand for the synthetic matrix contract.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -28,7 +29,9 @@ def _add_generate_tone_subparser(subparsers: argparse._SubParsersAction) -> None
     p.add_argument("--b", type=float, default=0.0003, help="Inharmonicity coefficient B")
     p.add_argument("--duration", type=float, default=2.0, help="Duration in seconds")
     p.add_argument("--fs", type=int, default=48000, help="Sample rate")
-    p.add_argument("--snr-db", type=float, default=None, help="Add white noise for this SNR (None = clean)")
+    p.add_argument(
+        "--snr-db", type=float, default=None, help="Add white noise for this SNR (None = clean)"
+    )
     p.add_argument("--no-hammer", action="store_true", help="Disable hammer transient model")
     p.add_argument("--seed", type=int, default=42, help="RNG seed for reproducibility")
     p.add_argument("--out", type=Path, required=True, help="Output .wav path")
@@ -92,7 +95,9 @@ def _cmd_generate_tone(args: argparse.Namespace) -> int:
 
     # Write as float32 WAV (standard for analysis tools)
     wavfile.write(out_path, args.fs, y.astype("float32"))
-    print(f"Wrote {len(y)/args.fs:.3f}s tone to {out_path} (midi={args.midi}, cents={args.cents}, B={args.b}, seed={args.seed})")
+    print(
+        f"Wrote {len(y) / args.fs:.3f}s tone to {out_path} (midi={args.midi}, cents={args.cents}, B={args.b}, seed={args.seed})"
+    )
     return 0
 
 

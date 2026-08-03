@@ -2,11 +2,11 @@
 CentsDisplay — large, color-coded cents deviation readout.
 
 Shows ± cents from target with big, readable typography suitable for viewing
-from the piano bench (Phase 3+ target: 90–140 pt font).
+from the piano bench (Phase 3+ target: 90-140 pt font).
 
 Color logic (per plan):
     |error| < 3¢   → bright green
-    3–10¢          → yellow/amber
+    3-10¢          → yellow/amber
     > 10¢          → red
 
 This is currently a high-quality stub with the public API the tuner will drive.
@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont
-from PySide6.QtWidgets import QLabel, QSizePolicy
+from PySide6.QtWidgets import QLabel, QSizePolicy, QWidget
 
 
 class CentsDisplay(QLabel):
@@ -29,7 +29,7 @@ class CentsDisplay(QLabel):
         reset()
     """
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
@@ -66,7 +66,7 @@ class CentsDisplay(QLabel):
         elif abs(self._cents) < 10.0:
             color = QColor(255, 200, 80)  # amber
         else:
-            color = QColor(255, 90, 90)   # red
+            color = QColor(255, 90, 90)  # red
 
         self.setText(text)
         self.setStyleSheet(f"color: {color.name()};")

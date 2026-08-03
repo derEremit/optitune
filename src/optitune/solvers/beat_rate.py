@@ -14,7 +14,7 @@ from piano_tuner_implementation_spec.md §6.2:
 - Very light L2 regularizer pulling c toward a gentle default Railsback curve
   (prevents wild excursions with sparse data while still letting measurements dominate).
 - Exact A4 (MIDI 69, index 48) lock at 0 cents via high-weight pin.
-- 3–7 Gauss-Newton-style iterations; converges in < 20 ms.
+- 3-7 Gauss-Newton-style iterations; converges in < 20 ms.
 
 The public `compute_basic_tuning_curve` replaces the old heuristic and is
 what the GUI and `apply_curve_to_piano` use. The legacy heuristic remains
@@ -47,7 +47,7 @@ A4_IDX = A4_MIDI - MIDI_LOW  # 48
 
 def _et_f0(midi: int, a4: float = 440.0) -> float:
     """Equal-tempered fundamental for the given MIDI (no stretch)."""
-    return a4 * (2.0 ** ((midi - 69) / 12.0))
+    return float(a4 * (2.0 ** ((midi - 69) / 12.0)))
 
 
 def compute_beat_rate_for_interval(
@@ -73,7 +73,7 @@ def compute_beat_rate_for_interval(
     r2 = 2.0 ** (c2 / 1200.0)
     s1 = math.sqrt(1.0 + b1 * n1 * n1)
     s2 = math.sqrt(1.0 + b2 * n2 * n2)
-    return n2 * f02 * s2 * r2 - n1 * f01 * s1 * r1
+    return float(n2 * f02 * s2 * r2 - n1 * f01 * s1 * r1)
 
 
 def compute_basic_tuning_curve(
@@ -90,7 +90,7 @@ def compute_basic_tuning_curve(
 
     This is the improved solver: iterative linearized weighted least-squares
     minimization of interval beat rates β (with B-driven partial frequencies)
-    subject to A4 lock, Shah–Välimäki treble rule, and mild Railsback prior
+    subject to A4 lock, Shah-Välimäki treble rule, and mild Railsback prior
     regularizer.
 
     When fewer than 3 measured B values are present, falls back to the
@@ -101,7 +101,7 @@ def compute_basic_tuning_curve(
         (higher = more important to satisfy). Keys include:
         "octave_2_1", "octave_4_2" (highest), "octave_6_3", "octave_8_4",
         "fifth_3_2", "fourth_4_3", "twelfth_3_1", ...
-    reg_mu: strength of L2 pull toward a mild default Railsback. 
+    reg_mu: strength of L2 pull toward a mild default Railsback.
     """
     # 1. Gather measured (midi, B) — identical collection logic to heuristic
     measured: list[tuple[int, float]] = []
@@ -136,10 +136,10 @@ def compute_basic_tuning_curve(
     if interval_weights is None:
         interval_weights = {
             "octave_2_1": 5.5,
-            "octave_4_2": 28.0,   # primary audible octave control (highest weight)
+            "octave_4_2": 28.0,  # primary audible octave control (highest weight)
             "octave_6_3": 8.5,
             "octave_8_4": 2.2,
-            "fifth_3_2": 0.6,     # light — helps overall coherence without fighting stretch
+            "fifth_3_2": 0.6,  # light — helps overall coherence without fighting stretch
             "fourth_4_3": 0.2,
             "twelfth_3_1": 0.9,
             "double_oct_4_1": 0.4,
@@ -263,9 +263,9 @@ def compute_basic_tuning_curve(
     default_prior = _default_railsback_curve()
     mild_target = np.asarray([0.35 * x for x in default_prior], dtype=float)
 
-    c = mild_target.copy()   # start from a musically sane point (data will refine)
+    c = mild_target.copy()  # start from a musically sane point (data will refine)
 
-    for it in range(max_iter):
+    for _it in range(max_iter):
         r = np.power(2.0, c / 1200.0)  # current stretch factors for linearization point
 
         A_rows: list[np.ndarray] = []
@@ -284,7 +284,7 @@ def compute_basic_tuning_curve(
             r1 = r[i1]
             r2 = r[i2]
 
-            # β_lin(d) ≈ (a2*r2 - a1*r1) + α*(a2*r2 * d2 - a1*r1 * d1)
+            # β_lin(d) ≈ (a2*r2 - a1*r1) + alpha*(a2*r2 * d2 - a1*r1 * d1)
             # We want β_lin ≈ 0  ⇒  coef1*d1 + coef2*d2 ≈ -(a2*r2 - a1*r1)
             coef1 = -alpha * a1 * r1
             coef2 = alpha * a2 * r2
@@ -299,13 +299,13 @@ def compute_basic_tuning_curve(
         # Regularizer toward *mild_target* (not zero) on total c = c_cur + d
         #   sqrt(mu) * (c_k + d_k - t_k) ≈ 0
         sqrt_mu = math.sqrt(reg_mu)
-        for k in range(N):
-            if k == A4_IDX:
+        for ki in range(N):
+            if ki == A4_IDX:
                 continue  # pinned exactly below
             row = np.zeros(N, dtype=float)
-            row[k] = sqrt_mu
+            row[ki] = sqrt_mu
             A_rows.append(row)
-            b_rows.append(-sqrt_mu * (c[k] - mild_target[k]))
+            b_rows.append(-sqrt_mu * (float(c[ki]) - float(mild_target[ki])))
 
         # Hard A4 pin: (c_A4 + d_A4) ≈ 0 with enormous weight
         pin_w = 1.0e7

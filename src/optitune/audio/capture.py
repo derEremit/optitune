@@ -58,7 +58,9 @@ class AudioCapture:
                 if device is not None:
                     try:
                         dev_info: dict[str, Any] = sd.query_devices(device)
-                        self._actual_samplerate = int(dev_info.get("default_samplerate", self._requested_samplerate))
+                        self._actual_samplerate = int(
+                            dev_info.get("default_samplerate", self._requested_samplerate)
+                        )
                     except Exception:
                         self._actual_samplerate = self._requested_samplerate
                 else:
@@ -131,5 +133,6 @@ class AudioCapture:
 
     def __del__(self) -> None:
         import contextlib
+
         with contextlib.suppress(Exception):
             self.stop()

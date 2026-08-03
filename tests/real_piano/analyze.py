@@ -22,8 +22,8 @@ import numpy as np
 # Make sure we can import from the project
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
-from optitune.dsp import find_spectral_peaks, pfd_estimate_f0_b, hz_to_midi, midi_to_note_name
-from tests.real_piano.loader import load_recording, list_recordings
+from optitune.dsp import find_spectral_peaks, hz_to_midi, midi_to_note_name, pfd_estimate_f0_b
+from tests.real_piano.loader import list_recordings, load_recording
 
 
 def analyze_one(name: str, plot: bool = False) -> None:
@@ -38,7 +38,7 @@ def analyze_one(name: str, plot: bool = False) -> None:
     print(f"File       : {meta.get('filename')}")
     print(f"Label      : {meta.get('note_label')}")
     print(f"Approx MIDI: {meta.get('approx_midi')}")
-    print(f"Duration   : {meta.get('duration', len(audio)/sr):.2f} s")
+    print(f"Duration   : {meta.get('duration', len(audio) / sr):.2f} s")
     print(f"Sample rate: {sr} Hz")
 
     # Use middle portion to avoid hammer attack and late decay
@@ -61,22 +61,18 @@ def analyze_one(name: str, plot: bool = False) -> None:
     power = np.abs(spec) ** 2
     freqs = np.fft.rfftfreq(len(segment), 1.0 / sr)
 
-    peak_fs, peak_as = find_spectral_peaks(
-        freqs, power, min_prominence_db=12.0, max_peaks=20
-    )
+    peak_fs, peak_as = find_spectral_peaks(freqs, power, min_prominence_db=12.0, max_peaks=20)
 
     if len(peak_fs) == 0:
         print("No significant peaks found.")
         return
 
-    f0, B = pfd_estimate_f0_b(
-        peak_fs, peak_as, f0_guess=200.0, max_n=16
-    )
+    f0, B = pfd_estimate_f0_b(peak_fs, peak_as, f0_guess=200.0, max_n=16)
 
     detected_midi = round(hz_to_midi(f0)) if f0 > 20 else None
     detected_note = midi_to_note_name(detected_midi) if detected_midi else "?"
 
-    print(f"\n--- Current Estimator Result ---")
+    print("\n--- Current Estimator Result ---")
     print(f"Detected f0 : {f0:.1f} Hz")
     print(f"Detected    : {detected_note} (MIDI {detected_midi})")
     print(f"Inharmonicity B : {B:.6f}")
@@ -114,7 +110,9 @@ def analyze_one(name: str, plot: bool = False) -> None:
             plt.tight_layout()
             plt.show()
         except ImportError:
-            print("\nmatplotlib not installed — skipping plot. Install with: pip install matplotlib")
+            print(
+                "\nmatplotlib not installed — skipping plot. Install with: pip install matplotlib"
+            )
 
 
 def analyze_all(plot: bool = False) -> None:

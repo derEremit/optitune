@@ -13,27 +13,48 @@ All timing is explicit (pass `now` into on_level_tick) so tests are deterministi
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Optional
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from optitune.ui.widgets.keyboard_widget import KeyState
+
+logger = logging.getLogger(__name__)
 
 # Controllable verbosity for heavy per-tick diagnostics (priority 6)
 # Set OPTITUNE_DIAG=1 (or verbose/full) to see every [DIAG][Onset] tick when armed.
-_DIAG_ONSET_VERBOSE = os.environ.get("OPTITUNE_DIAG", "0").lower() in ("1", "true", "yes", "verbose", "full", "on")
+_DIAG_ONSET_VERBOSE = os.environ.get("OPTITUNE_DIAG", "0").lower() in (
+    "1",
+    "true",
+    "yes",
+    "verbose",
+    "full",
+    "on",
+)
+
+if _DIAG_ONSET_VERBOSE and not logger.handlers:
+    _h = logging.StreamHandler()
+    _h.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(_h)
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
 
 
 class AutoRecordPhase(Enum):
     IDLE = auto()
-    ARMED = auto()           # Waiting for the musician to play the target note (red)
-    CONFIRMING_ONSET = auto() # Saw loud sound, accumulating confirmation time
-    RECORDING = auto()       # In the fixed-length capture window (stronger red)
+    ARMED = auto()  # Waiting for the musician to play the target note (red)
+    CONFIRMING_ONSET = auto()  # Saw loud sound, accumulating confirmation time
+    RECORDING = auto()  # In the fixed-length capture window (stronger red)
 
 
 class AutoRecordEvent(Enum):
     """Events the controller can emit to the UI layer."""
-    ONSET_CONFIRMED = auto()   # Transition ARMED -> RECORDING
+
+    ONSET_CONFIRMED = auto()  # Transition ARMED -> RECORDING
     CAPTURE_FINISHED = auto()  # Time to call _finish_auto_capture / commit
 
 
@@ -53,6 +74,11 @@ class AutoRecordController:
         self._target_midi: int | None = None
         self._onset_start_time: float | None = None
         self._capture_end_time: float | None = None
+        self._recent_loud_ticks: list[bool] = []
+        self._prev_db: float | None = None
+        self._consecutive_loud: int = 0
+        self._recent_rises: list[float] = []
+        self._require_strong_attack_until: float = 0.0
 
     # ---------------- Public API used by MainWindow ----------------
 
@@ -76,13 +102,15 @@ class AutoRecordController:
     def capture_duration_ms(self) -> int:
         return self._config.capture_duration_ms
 
-    def get_forced_visual_state(self) -> tuple[int, "KeyState"] | None:
+    def get_forced_visual_state(self) -> tuple[int, KeyState] | None:
         """
         If we are currently ARMED or RECORDING a specific key, return
         (midi, desired KeyState) so the UI can force that visual state
         and prevent live detection from clobbering it.
         """
-        from optitune.ui.widgets.keyboard_widget import KeyState as _KS  # avoid circular import at module level
+        from optitune.ui.widgets.keyboard_widget import (
+            KeyState as _KS,  # avoid circular import at module level
+        )
 
         if self._target_midi is None:
             return None
@@ -104,7 +132,7 @@ class AutoRecordController:
         self._recent_loud_ticks = []
         self._prev_db = None
         self._consecutive_loud = 0
-        self._recent_rises: list[float] = []
+        self._recent_rises = []
 
     def disarm(self) -> None:
         """User explicitly stops waiting / recording."""
@@ -120,7 +148,7 @@ class AutoRecordController:
         """
         Called ~20 times per second from the level meter timer.
 
-        Onset detection hardened on real piano recordings (C1–C7 + F1–F7).
+        Onset detection hardened on real piano recordings (C1-C7 + F1-F7).
 
         Strategy:
         - Use consecutive loud ticks for sustained energy.
@@ -138,7 +166,7 @@ class AutoRecordController:
             # Handle the explicit None reset from arm() cleanly (first tick after arm
             # or after a capture) so we never crash and the very first post-arm tick
             # can participate in onset logic.
-            prev_db = getattr(self, "_prev_db", None)
+            prev_db = self._prev_db
             if prev_db is None:
                 prev_db = current_db - 3.0
             self._prev_db = current_db
@@ -146,12 +174,9 @@ class AutoRecordController:
 
             loud = current_db > self._config.onset_db_threshold
 
-            if not hasattr(self, "_recent_loud_ticks"):
-                self._recent_loud_ticks: list[bool] = []
-
             # Track consecutive loud ticks at the end (stricter than sliding majority)
             if loud:
-                self._consecutive_loud = getattr(self, "_consecutive_loud", 0) + 1
+                self._consecutive_loud += 1
             else:
                 self._consecutive_loud = 0
 
@@ -163,8 +188,6 @@ class AutoRecordController:
             # Track recent rises during the current loud streak.
             # This lets us credit a strong attack transient even if it happened a few ticks earlier
             # (by the time consec count reaches threshold, the instantaneous rise is often near zero).
-            if not hasattr(self, "_recent_rises"):
-                self._recent_rises: list[float] = []
             if loud:
                 self._recent_rises.append(db_rise)
                 if len(self._recent_rises) > 10:  # ~500 ms look-back at 50 ms ticks
@@ -176,32 +199,40 @@ class AutoRecordController:
             midi = self._target_midi or 60
             octave = (midi - 24) // 12
 
-            if octave >= 5:      # High notes (C6+): allow slightly faster confirmation
-                needed_consecutive = 4
-            else:
-                needed_consecutive = 6   # Low/mid notes: require solid sustained attack
+            # High notes (C6+) confirm slightly faster; low/mid require a solid sustained attack.
+            needed_consecutive = 4 if octave >= 5 else 6
 
             # Extra strictness after a recent capture (post-capture attack requirement)
-            require_strong_attack = getattr(self, "_require_strong_attack_until", 0) > now
+            require_strong_attack = self._require_strong_attack_until > now
             min_rise = 8.0 if require_strong_attack else 5.0
 
             if _DIAG_ONSET_VERBOSE:
-                print(
-                    f"[DIAG][Onset] db={current_db:.1f} rise={db_rise:+.1f} "
-                    f"loud={loud} consec={self._consecutive_loud} needed={needed_consecutive} "
-                    f"strong_attack_req={require_strong_attack} target={self._target_midi}"
+                logger.debug(
+                    "[DIAG][Onset] db=%.1f rise=%+.1f loud=%s consec=%d needed=%d "
+                    "strong_attack_req=%s target=%s",
+                    current_db,
+                    db_rise,
+                    loud,
+                    self._consecutive_loud,
+                    needed_consecutive,
+                    require_strong_attack,
+                    self._target_midi,
                 )
 
             # Confirm if we have enough consecutive loud ticks *and* there was a sufficiently
             # strong rise at some point in the recent loud streak (not only on this exact tick).
             max_recent_rise = max(self._recent_rises) if self._recent_rises else db_rise
-            confirmed = (
-                self._consecutive_loud >= needed_consecutive and
-                max_recent_rise >= min_rise
-            )
+            confirmed = self._consecutive_loud >= needed_consecutive and max_recent_rise >= min_rise
 
             if confirmed:
-                print(f"[DIAG][Onset] >>> ONSET CONFIRMED for {self._target_midi} (consec={self._consecutive_loud}, rise={db_rise:.1f}, max_recent_rise={max_recent_rise:.1f})")
+                logger.info(
+                    "[DIAG][Onset] >>> ONSET CONFIRMED for %s (consec=%d, rise=%.1f, "
+                    "max_recent_rise=%.1f)",
+                    self._target_midi,
+                    self._consecutive_loud,
+                    db_rise,
+                    max_recent_rise,
+                )
                 self._phase = AutoRecordPhase.RECORDING
                 self._capture_end_time = now + (self._config.capture_duration_ms / 1000.0)
                 self._recent_loud_ticks = []
@@ -209,7 +240,7 @@ class AutoRecordController:
                 self._recent_rises = []
                 self._prev_db = current_db
                 # Clear any pending strong-attack requirement
-                self._require_strong_attack_until = 0
+                self._require_strong_attack_until = 0.0
                 return AutoRecordEvent.ONSET_CONFIRMED
 
             # Occasional reset of history if mostly quiet

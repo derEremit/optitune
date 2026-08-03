@@ -1,10 +1,11 @@
 """
-Synthetic inharmonic piano tone generator using the exact Fletcher–Young model.
+Synthetic inharmonic piano tone generator using the exact Fletcher-Young model.
 
 f_n = n * F0 * sqrt(1 + B * n**2)   — piano_tuner_implementation_spec.md §2.1
 
 Fully deterministic given seed. Supports hammer transient, SNR, detune, all matrix cases.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -12,7 +13,7 @@ import numpy as np
 
 def midi_to_hz(midi: int, a4: float = 440.0) -> float:
     """Standard equal-tempered conversion (A4 = 440 by default for synth)."""
-    return a4 * (2.0 ** ((midi - 69) / 12.0))
+    return float(a4 * (2.0 ** ((midi - 69) / 12.0)))
 
 
 def fletcher_young_partial_frequencies(
@@ -53,7 +54,9 @@ def _hammer_transient(
     ht = t[:hammer_len]
     # Inharmonic thump ~ 0.6-0.9 * f0 , damped fast
     thump_f = f0 * (0.65 + 0.12 * rng.random())
-    thump = strength * 0.9 * np.exp(-ht / 0.022) * np.sin(2 * np.pi * thump_f * ht + rng.random() * 0.3)
+    thump = (
+        strength * 0.9 * np.exp(-ht / 0.022) * np.sin(2 * np.pi * thump_f * ht + rng.random() * 0.3)
+    )
 
     # High-freq click / felt noise , very short
     click = strength * rng.normal(0.0, 0.65, hammer_len) * np.exp(-ht / 0.0065)
@@ -126,7 +129,7 @@ def generate_inharmonic_tone(
     # Final peak normalization (prevents clipping while preserving relative dynamics)
     peak = np.max(np.abs(y))
     if peak > peak_amp:
-        y *= (peak_amp / peak)
+        y *= peak_amp / peak
 
     # Very small DC removal
     y -= np.mean(y)
@@ -135,6 +138,7 @@ def generate_inharmonic_tone(
 
 
 # --- Convenience wrappers required by plan + matrix ---
+
 
 def perfect_tone(
     midi: int,
@@ -145,7 +149,14 @@ def perfect_tone(
 ) -> np.ndarray:
     """Zero-detune, very low inharmonicity reference tone."""
     return generate_inharmonic_tone(
-        midi, detune_cents=0.0, B=B, duration=duration, fs=fs, snr_db=None, with_hammer=True, seed=seed
+        midi,
+        detune_cents=0.0,
+        B=B,
+        duration=duration,
+        fs=fs,
+        snr_db=None,
+        with_hammer=True,
+        seed=seed,
     )
 
 
@@ -169,22 +180,30 @@ def detuned_tone(
     else:
         raise ValueError(f"Unknown level {level}")
     return generate_inharmonic_tone(
-        midi, detune_cents=cents, B=B, duration=duration, fs=fs, snr_db=None, with_hammer=True, seed=seed
+        midi,
+        detune_cents=cents,
+        B=B,
+        duration=duration,
+        fs=fs,
+        snr_db=None,
+        with_hammer=True,
+        seed=seed,
     )
 
 
 # --- Phase 3 pitch utilities (used by live analysis and tests) ---
 
+
 def hz_to_midi(f_hz: float, a4: float = 440.0) -> float:
     """Continuous MIDI note number (float, 69 = A4) given frequency and A4 reference."""
     if f_hz <= 0.0:
         return 0.0
-    return 69.0 + 12.0 * np.log2(f_hz / a4)
+    return float(69.0 + 12.0 * np.log2(f_hz / a4))
 
 
 def midi_to_note_name(midi: int | float) -> str:
     """Return scientific pitch notation e.g. 'C#4', 'A0' for a MIDI number."""
-    m = int(round(float(midi)))
+    m = round(float(midi))
     if m < 0 or m > 127:
         return "?"
     names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]

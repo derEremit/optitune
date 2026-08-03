@@ -14,7 +14,7 @@ This is currently a high-quality stub. Real implementation will use QPainter + Q
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QBrush, QColor, QPainter, QPen
+from PySide6.QtGui import QBrush, QColor, QMouseEvent, QPainter, QPaintEvent, QPen
 from PySide6.QtWidgets import QWidget
 
 
@@ -86,7 +86,7 @@ class StrobeWidget(QWidget):
         self._angle_deg = (self._angle_deg + rotation_speed) % 360.0
         self.update()
 
-    def paintEvent(self, event) -> None:
+    def paintEvent(self, event: QPaintEvent) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
@@ -121,6 +121,6 @@ class StrobeWidget(QWidget):
             f"{self._target_hz:.1f} Hz  (p{self._partial})",
         )
 
-    def mousePressEvent(self, event) -> None:
+    def mousePressEvent(self, event: QMouseEvent) -> None:
         self.strobe_clicked.emit()
         super().mousePressEvent(event)

@@ -34,7 +34,9 @@ def list_input_devices() -> list[dict[str, Any]]:
         if d.get("max_input_channels", 0) <= 0:
             continue
         hostapi_idx = d.get("hostapi", 0)
-        hostapi_name = hostapis[hostapi_idx]["name"] if 0 <= hostapi_idx < len(hostapis) else "Unknown"
+        hostapi_name = (
+            hostapis[hostapi_idx]["name"] if 0 <= hostapi_idx < len(hostapis) else "Unknown"
+        )
         # Clean common hostapi names
         if "PipeWire" in hostapi_name:
             hostapi_name = "PipeWire"

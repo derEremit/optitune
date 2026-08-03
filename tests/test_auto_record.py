@@ -48,7 +48,9 @@ def test_arm_sets_armed_phase_and_remembers_target():
 
 def test_armed_stays_armed_while_sound_is_below_threshold():
     """Core user requirement: the key must stay visibly ARMED (red) until a real onset."""
-    ctrl = AutoRecordController(AutoRecordConfig(onset_db_threshold=-28.0, min_onset_confirmation_ms=280))
+    ctrl = AutoRecordController(
+        AutoRecordConfig(onset_db_threshold=-28.0, min_onset_confirmation_ms=280)
+    )
     ctrl.arm(60)
 
     now = time.time()
@@ -62,7 +64,9 @@ def test_armed_stays_armed_while_sound_is_below_threshold():
 
 
 def test_onset_confirmation_requires_sustained_level_above_threshold():
-    ctrl = AutoRecordController(AutoRecordConfig(onset_db_threshold=-28.0, min_onset_confirmation_ms=280))
+    ctrl = AutoRecordController(
+        AutoRecordConfig(onset_db_threshold=-28.0, min_onset_confirmation_ms=280)
+    )
     ctrl.arm(60)
 
     now = time.time()
@@ -79,7 +83,7 @@ def test_onset_confirmation_requires_sustained_level_above_threshold():
 
     # Sustained loud sound for >= min_onset_confirmation_ms
     events = []
-    for i in range(10):  # ~500 ms of loud sound
+    for _i in range(10):  # ~500 ms of loud sound
         t += 0.05
         ev = ctrl.on_level_tick(current_db=-12.0, now=t)
         if ev:
@@ -105,7 +109,9 @@ def test_recording_phase_runs_for_configured_duration_then_emits_finished():
     # After the configured duration we get the finish event
     ev = ctrl.on_level_tick(current_db=-15.0, now=now + 0.5)
     assert ev == AutoRecordEvent.CAPTURE_FINISHED
-    assert ctrl.phase == AutoRecordPhase.IDLE  # or a transitional state; controller yields control back
+    assert (
+        ctrl.phase == AutoRecordPhase.IDLE
+    )  # or a transitional state; controller yields control back
 
 
 def test_disarm_while_armed_clears_state_and_target():
@@ -160,6 +166,7 @@ def test_configurable_onset_params_are_respected():
 
 # ---------------- Integration-style scenarios the user actually hit ----------------
 
+
 def test_full_hands_free_cycle_with_auto_advance_simulation():
     """
     Reproduce the exact workflow the user wanted:
@@ -195,6 +202,7 @@ def test_full_hands_free_cycle_with_auto_advance_simulation():
 
 
 # ---------------- Protection against live detection clobbering ----------------
+
 
 def test_controller_provides_forced_visual_state_while_armed_or_recording():
     """

@@ -17,20 +17,18 @@ and visual stability using the exact material the user will record on their pian
 
 from __future__ import annotations
 
+import contextlib
 import os
 import time
 from pathlib import Path
 
 import numpy as np
+import pytest
 from scipy.io import wavfile
 
-import numpy as np
-import pytest
-from PySide6.QtCore import QTimer
-
+from optitune.dsp.synth import midi_to_note_name
 from optitune.ui.main_window import OptiTuneMainWindow
 from optitune.ui.widgets.keyboard_widget import KeyState
-from optitune.dsp.synth import midi_to_note_name
 from tests.real_piano.loader import load_recording
 
 MASTER_RECORDING_PATH = Path(__file__).parent.parent.parent / "testmaterial" / "c and f.flac"
@@ -47,7 +45,9 @@ pytestmark = pytest.mark.real_piano
 # For completely headless (no X server at all):
 #   QT_QPA_PLATFORM=offscreen uv run pytest -m real_piano ...
 SHOW_GUI = bool(os.environ.get("OPTITUNE_TEST_SHOW_GUI"))
-HEADLESS = bool(os.environ.get("QT_QPA_PLATFORM") == "offscreen" or os.environ.get("OPTITUNE_TEST_HEADLESS"))
+HEADLESS = bool(
+    os.environ.get("QT_QPA_PLATFORM") == "offscreen" or os.environ.get("OPTITUNE_TEST_HEADLESS")
+)
 
 
 def _create_test_window(qtbot):
@@ -115,7 +115,10 @@ def _push_audio_chunk(window: OptiTuneMainWindow, audio: np.ndarray, sr: int, ch
 # Diagnostic helpers for understanding real piano onsets
 # ---------------------------------------------------------------------------
 
-def get_db_sequence_from_real_recording(note_label: str, chunk_ms: int = 50, max_seconds: float = 4.0) -> list[float]:
+
+def get_db_sequence_from_real_recording(
+    note_label: str, chunk_ms: int = 50, max_seconds: float = 4.0
+) -> list[float]:
     """
     Replay a real recording through the same RMS → dB calculation that the
     level meter uses. Returns the list of dB values the controller would see.
@@ -132,7 +135,7 @@ def get_db_sequence_from_real_recording(note_label: str, chunk_ms: int = 50, max
     while pos < len(audio) and (pos / sr) < max_seconds:
         # Take a window ending at current position (like ringbuffer.get_latest)
         start = max(0, pos - window_size)
-        buf = audio[start:pos + chunk_size] if pos > 0 else audio[:chunk_size]
+        buf = audio[start : pos + chunk_size] if pos > 0 else audio[:chunk_size]
 
         if len(buf) < 64:
             pos += chunk_size
@@ -144,7 +147,7 @@ def get_db_sequence_from_real_recording(note_label: str, chunk_ms: int = 50, max
         elif len(buf) < window_size:
             buf = np.pad(buf, (0, window_size - len(buf)))
 
-        rms = float(np.sqrt(np.mean(buf ** 2)))
+        rms = float(np.sqrt(np.mean(buf**2)))
         db = -60.0 if rms <= 1e-7 else 20.0 * np.log10(rms)
         dbs.append(round(db, 1))
         pos += chunk_size
@@ -176,6 +179,7 @@ def feed_master_recording_with_guided_sequence(
     # Prefer the compressed FLAC version (much smaller in git)
     if MASTER_RECORDING_PATH.exists():
         import soundfile as sf
+
         data, sr = sf.read(MASTER_RECORDING_PATH)
         audio = data.astype(np.float32)
         if len(audio.shape) > 1:
@@ -211,17 +215,13 @@ def feed_master_recording_with_guided_sequence(
             window.ringbuffer.push(chunk.astype(np.float32))
 
         # Drive the level meter (this is where the controller sees real onsets)
-        try:
+        with contextlib.suppress(Exception):
             window._update_level_meter()
-        except Exception:
-            pass
 
         # Occasionally run analysis so _last_est is populated for commit
         if (pos // chunk_samples) % 4 == 0:
-            try:
+            with contextlib.suppress(Exception):
                 window._run_live_analysis()
-            except Exception:
-                pass
 
         # After each level tick, check if the current target has been successfully measured.
         # If so, advance to the next in our known sequence and re-arm.
@@ -266,7 +266,7 @@ def simulate_play_real_note(
 
     This is much more deterministic than relying purely on QTimer wall time.
     """
-    audio, sr, meta = load_recording(note_label)
+    audio, sr, _meta = load_recording(note_label)
 
     silence_samples = int(sr * pre_silence_ms / 1000)
     silence = np.zeros(silence_samples, dtype=np.float32) * 1e-5
@@ -286,17 +286,13 @@ def simulate_play_real_note(
         remaining = _push_audio_chunk(window, remaining, sr, chunk_samples)
 
         # Manually tick the level meter so the controller sees the real energy
-        try:
+        with contextlib.suppress(Exception):
             window._update_level_meter()
-        except Exception:
-            pass
 
         # Occasionally let the analysis run too (so _last_est gets populated)
         if iterations % 3 == 0:
-            try:
+            with contextlib.suppress(Exception):
                 window._run_live_analysis()
-            except Exception:
-                pass
 
         qtbot.wait(5)  # give Qt event loop a tiny breath
         iterations += 1
@@ -304,10 +300,8 @@ def simulate_play_real_note(
     # Final tail + one more meter tick
     if len(remaining) > 0:
         window.ringbuffer.push(remaining.astype(np.float32))
-    try:
+    with contextlib.suppress(Exception):
         window._update_level_meter()
-    except Exception:
-        pass
 
     qtbot.wait(30)
 
@@ -315,6 +309,7 @@ def simulate_play_real_note(
 # =============================================================================
 # Concrete user workflow tests (TDD style)
 # =============================================================================
+
 
 def test_record_one_note_using_real_recording(qtbot):
     """
@@ -349,7 +344,9 @@ def test_record_one_note_using_real_recording(qtbot):
     # After successful capture + commit, the key should be MEASURED
     # (and the controller should no longer be forcing ARMED/RECORDING on it)
     final_state = window.keyboard._states.get(target_midi)
-    assert final_state == KeyState.MEASURED, f"Expected MEASURED after recording C4, got {final_state}"
+    assert final_state == KeyState.MEASURED, (
+        f"Expected MEASURED after recording C4, got {final_state}"
+    )
 
     # The controller should be back to IDLE (or ready for next manual arm)
     assert window._auto_record_ctrl.phase.name == "IDLE"
@@ -376,7 +373,7 @@ def test_record_full_ascending_C_scale_with_auto_advance(qtbot):
     c_notes = ["C1", "C2", "C3", "C4", "C5", "C6", "C7"]
     base_midis = [24, 36, 48, 60, 72, 84, 96]
 
-    for i, (label, midi) in enumerate(zip(c_notes, base_midis)):
+    for i, (label, midi) in enumerate(zip(c_notes, base_midis, strict=False)):
         # Use the helper so we get the dialog suppression + consistent behavior
         _arm_for_note(window, midi, qtbot)
         qtbot.wait(30)
@@ -433,6 +430,7 @@ def test_record_full_ascending_C_scale_with_auto_advance(qtbot):
 # Additional thoughtful user scenarios (to be expanded)
 # =============================================================================
 
+
 def test_record_soft_high_note_C7(qtbot):
     """High notes in the user's recording are short and softer — important regression case."""
     window = _create_test_window(qtbot)
@@ -481,6 +479,7 @@ def test_user_cancels_arming_before_playing(qtbot):
 # Diagnostics / data gathering for improving onset on real material
 # ---------------------------------------------------------------------------
 
+
 def test_show_real_piano_db_profiles():
     """
     Diagnostic test (run with -s to see output).
@@ -494,8 +493,10 @@ def test_show_real_piano_db_profiles():
         try:
             dbs = get_db_sequence_from_real_recording(label, chunk_ms=50, max_seconds=3.5)
             above = [d for d in dbs if d > -28]
-            print(f"\n{label}: {len(dbs)} samples, max dB={max(dbs):.1f}, "
-                  f"samples > -28dB = {len(above)} / {len(dbs)}")
+            print(
+                f"\n{label}: {len(dbs)} samples, max dB={max(dbs):.1f}, "
+                f"samples > -28dB = {len(above)} / {len(dbs)}"
+            )
             # Show the first 20 values so we can see the attack shape
             print("  first 20 dB:", dbs[:20])
         except Exception as e:
@@ -522,8 +523,20 @@ def test_play_full_master_recording_should_capture_correct_c_and_f_sequence(qtbo
 
     # Known correct sequence from how the master file was recorded
     c_and_f_sequence = [
-        24, 36, 48, 60, 72, 84, 96,   # C1–C7
-        29, 41, 53, 65, 77, 89, 101   # F1–F7
+        24,
+        36,
+        48,
+        60,
+        72,
+        84,
+        96,  # C1-C7
+        29,
+        41,
+        53,
+        65,
+        77,
+        89,
+        101,  # F1-F7
     ]
 
     # Arm on the first note
@@ -543,11 +556,16 @@ def test_play_full_master_recording_should_capture_correct_c_and_f_sequence(qtbo
     print(f"\n[Full master file] Captured {captured} notes: {captured_list}")
 
     # Strong requirement: the full real performance should result in (almost) all notes captured
-    assert captured >= 13, f"Only captured {captured} notes ({captured_list}) when feeding the full master file"
+    assert captured >= 13, (
+        f"Only captured {captured} notes ({captured_list}) when feeding the full master file"
+    )
 
     if window._piano:
-        measured = [m for m, k in window._piano.keys.items()
-                    if k.measured_f0 is not None or k.measured_b is not None]
+        measured = [
+            m
+            for m, k in window._piano.keys.items()
+            if k.measured_f0 is not None or k.measured_b is not None
+        ]
         # At least the C scale should be substantially complete
         c_measured = len([m for m in measured if m in c_and_f_sequence[:7]])
         assert c_measured >= 5, f"Only {c_measured} C notes were recorded from the full file"
@@ -559,13 +577,14 @@ def test_play_full_master_recording_should_capture_correct_c_and_f_sequence(qtbo
 # Stricter real auto-advance test (chosen direction from user)
 # =============================================================================
 
+
 def _feed_master_with_real_auto_advance(
     window: OptiTuneMainWindow,
     qtbot,
     *,
     chunk_ms: int = 55,
     max_duration_s: float = 80.0,
-    series: str | None = None,   # "C" → only feed the C root-note series (much faster iteration)
+    series: str | None = None,  # "C" → only feed the C root-note series (much faster iteration)
 ) -> tuple[int, list[int]]:
     """
     Feed the master recording while letting the *real* auto-advance
@@ -575,24 +594,30 @@ def _feed_master_with_real_auto_advance(
     This version has very verbose diagnostic logging so we can observe
     exactly what the onset detection and auto-advance are doing in real time.
 
-    `series="C"` limits feeding to roughly the first C1–C7 portion (~first 32-35s
+    `series="C"` limits feeding to roughly the first C1-C7 portion (~first 32-35s
     of the performance after the leading silence). Extremely useful for fast
     iteration on the C series without waiting for the full 67s file every time.
     """
-    if not MASTER_RECORDING_PATH.exists() and not MASTER_RECORDING_PATH.with_suffix(".flac").exists():
+    if (
+        not MASTER_RECORDING_PATH.exists()
+        and not MASTER_RECORDING_PATH.with_suffix(".flac").exists()
+    ):
         pytest.skip("Master recording not present")
 
     # Load (prefer FLAC)
     flac_path = MASTER_RECORDING_PATH.with_suffix(".flac")
     if flac_path.exists():
         import soundfile as sf
+
         data, sr = sf.read(flac_path)
         audio = data.astype(np.float32)
         if len(audio.shape) > 1:
             audio = audio.mean(axis=1)
     else:
         sr, data = wavfile.read(MASTER_RECORDING_PATH)
-        audio = data.mean(axis=1).astype(np.float32) if len(data.shape) > 1 else data.astype(np.float32)
+        audio = (
+            data.mean(axis=1).astype(np.float32) if len(data.shape) > 1 else data.astype(np.float32)
+        )
 
     max_abs = np.max(np.abs(audio))
     if max_abs > 0:
@@ -609,8 +634,8 @@ def _feed_master_with_real_auto_advance(
         # Find first sample where a 1024-win rms would be loud-ish
         win = 1024
         for p in range(0, len(audio) - win, 2048):
-            b = audio[p:p+win]
-            r = float(np.sqrt(np.mean(b*b)))
+            b = audio[p : p + win]
+            r = float(np.sqrt(np.mean(b * b)))
             if r > 0.001:  # ~ -60dB-ish, early enough before real attack
                 pos = max(0, p - int(sr * 0.8))
                 break
@@ -625,19 +650,18 @@ def _feed_master_with_real_auto_advance(
             win_samples = int(sr * 0.4)
             gap_start = None
             for i in range(int(sr * 20), len(audio) - win_samples, win_samples):
-                rms = float(np.sqrt(np.mean(audio[i:i + win_samples] ** 2)))
+                rms = float(np.sqrt(np.mean(audio[i : i + win_samples] ** 2)))
                 if rms < 0.0008:  # sustained quiet
                     gap_start = i
                     break
-            if gap_start is not None:
-                c_series_cutoff = gap_start + int(sr * 1.5)  # a little past the gap
-            else:
-                c_series_cutoff = int(sr * 29.0)  # fallback
+            c_series_cutoff = gap_start + int(sr * 1.5) if gap_start is not None else int(sr * 29.0)
         except Exception:
             c_series_cutoff = int(sr * 29.0)
 
         audio = audio[:c_series_cutoff]
-        print("[Diagnostic] Running in C-series-only mode (dynamic gap detection)  [OPTITUNE_FAST_C or series='C']")
+        print(
+            "[Diagnostic] Running in C-series-only mode (dynamic gap detection)  [OPTITUNE_FAST_C or series='C']"
+        )
         print("            (C1-C7 portion only — much faster iteration)")
 
     captured = 0
@@ -647,15 +671,15 @@ def _feed_master_with_real_auto_advance(
 
     # Instrumentation for priority 7 iteration (longer diagnostic)
     during_capture_rejects = 0
-    scale_suppressions = 0
     c_series_captured = 0
     f_series_started = False
-    last_captured_was_c = False
-    probable_octave_errors = 0          # from the new detector in main_window
-    scale_armed_ticks = 0               # ticks where we were armed in scale mode
+    probable_octave_errors = 0  # from the new detector in main_window
+    scale_armed_ticks = 0  # ticks where we were armed in scale mode
 
     print("\n" + "=" * 80)
-    print("STARTING FULL MASTER RECORDING RUN WITH FULL DIAGNOSTIC LOGGING (OPTITUNE_DIAG=full forced)")
+    print(
+        "STARTING FULL MASTER RECORDING RUN WITH FULL DIAGNOSTIC LOGGING (OPTITUNE_DIAG=full forced)"
+    )
     print("=" * 80 + "\n")
 
     # Force full per-tick diagnostics for the master diagnostic run (priority 6).
@@ -674,7 +698,7 @@ def _feed_master_with_real_auto_advance(
             # Try to get the latest dB the level meter saw
             buf = window.ringbuffer.get_latest(1024)
             if len(buf) > 0:
-                rms = float(np.sqrt(np.mean(buf ** 2)))
+                rms = float(np.sqrt(np.mean(buf**2)))
                 current_db = -60.0 if rms <= 1e-7 else 20.0 * np.log10(rms)
             else:
                 current_db = -60.0
@@ -716,10 +740,8 @@ def _feed_master_with_real_auto_advance(
         # Layer-1 scale gate (_pitch_class_matches_expectation) and the commit-time
         # fresh estimator (_get_fresh_estimate_for_commit) always see recent audio
         # during note attacks. (Matches the "strengthened simulation" experiment.)
-        try:
+        with contextlib.suppress(Exception):
             window._run_live_analysis()
-        except Exception:
-            pass
 
         # Instrumentation for #7: count during-capture rejections (fires when live est bad during capture window)
         if getattr(window, "_during_capture_rejection_until", 0) > time.time():
@@ -728,16 +750,18 @@ def _feed_master_with_real_auto_advance(
         # Detect newly measured keys (now safe: clean slate + real commits only)
         if window._piano:
             for m, k in list(window._piano.keys.items()):
-                if (k.measured_f0 is not None or k.measured_b is not None) and m not in captured_midis:
+                if (
+                    k.measured_f0 is not None or k.measured_b is not None
+                ) and m not in captured_midis:
                     captured_midis.append(m)
                     captured += 1
-                    print(f"\n>>> NOTE CAPTURED: {m} ({midi_to_note_name(m)})  | total={captured}\n")
+                    print(
+                        f"\n>>> NOTE CAPTURED: {m} ({midi_to_note_name(m)})  | total={captured}\n"
+                    )
                     if m % 12 == 0:  # C class
                         c_series_captured += 1
-                        last_captured_was_c = True
                     elif m % 12 == 5:  # F class
                         f_series_started = True
-                        last_captured_was_c = False
 
         pos = end
         file_time = pos / sr
@@ -752,10 +776,16 @@ def _feed_master_with_real_auto_advance(
 
     # Machine-readable summary line for easy parsing / progress tracking across runs
     # Format: SUMMARY: captured=N c_series=M f_started=bool during_rejects=K octave_errors=O armed_ticks=A mode=full|c_only
-    mode = "c_only" if (series == "C" or os.environ.get("OPTITUNE_FAST_C", "0").lower() in ("1","true","yes")) else "full"
-    print(f"SUMMARY: captured={captured} c_series={c_series_captured} f_started={f_series_started} "
-          f"during_rejects={during_capture_rejects} octave_errors={probable_octave_errors} "
-          f"armed_ticks={scale_armed_ticks} mode={mode}")
+    mode = (
+        "c_only"
+        if (series == "C" or os.environ.get("OPTITUNE_FAST_C", "0").lower() in ("1", "true", "yes"))
+        else "full"
+    )
+    print(
+        f"SUMMARY: captured={captured} c_series={c_series_captured} f_started={f_series_started} "
+        f"during_rejects={during_capture_rejects} octave_errors={probable_octave_errors} "
+        f"armed_ticks={scale_armed_ticks} mode={mode}"
+    )
 
     return captured, captured_midis
 
@@ -815,9 +845,11 @@ def test_play_full_master_recording_with_real_auto_advance(qtbot):
 
     window.close()
 
+
 # =============================================================================
 # Small diagnostic utilities (for future scripting / comparison of runs)
 # =============================================================================
+
 
 def parse_summary_line(line: str) -> dict:
     """Very small helper to turn a SUMMARY line into a dict for easy comparison."""

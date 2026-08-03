@@ -4,6 +4,7 @@ Lightweight STFT wrapper for synthetic tone analysis and round-trip tests.
 Uses Blackman-Harris (4-term) as required by matrix contract and spec §3.3.
 Falls back gracefully if pyfftw not present (tests use scipy/numpy).
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -44,7 +45,7 @@ def get_central_frame_power(
     y: np.ndarray, fs: float = 48000.0, n_fft: int = 32768
 ) -> tuple[np.ndarray, np.ndarray]:
     """Convenience: return (freqs, power) of the middle frame for peak analysis."""
-    f, t, P = compute_stft(y, fs=fs, n_fft=n_fft)
+    f, _t, P = compute_stft(y, fs=fs, n_fft=n_fft)
     if P.shape[0] == 0:
         return f, np.zeros_like(f)
     mid = P.shape[0] // 2

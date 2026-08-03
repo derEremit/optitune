@@ -32,8 +32,7 @@ jobs:
 
       - name: mypy type check
         run: |
-          uv run mypy src/optitune --ignore-missing-imports || true
-        # Baseline allows some third-party ignores during early phases
+          uv run mypy src/optitune
 
       - name: Run tests (synthetic only — skip real_piano hardware)
         run: |

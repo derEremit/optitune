@@ -9,11 +9,9 @@ the RingBuffer (bypassing hardware) and verify end-to-end:
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
-from optitune.dsp.synth import generate_inharmonic_tone, midi_to_hz
+from optitune.dsp.synth import generate_inharmonic_tone
 from optitune.ui.main_window import OptiTuneMainWindow
-from optitune.ui.widgets.keyboard_widget import KeyState
 
 
 def test_main_window_instantiates(qtbot) -> None:
@@ -47,6 +45,7 @@ def test_main_window_has_expected_menu_structure(qtbot) -> None:
 
 
 # ---------------- Phase 3: Live DSP path tests with synthetic injection ----------------
+
 
 def test_live_analysis_synthetic_detuned_tone_updates_cents_and_widgets(qtbot) -> None:
     """
@@ -83,7 +82,9 @@ def test_live_analysis_synthetic_detuned_tone_updates_cents_and_widgets(qtbot) -
 
     # --- Assertions on widgets (tolerances generous for single-frame live path + real-piano variance) ---
     cents = float(getattr(window.cents_display, "_cents", 0.0))
-    assert abs(cents - detune_cents) < 50.0, f"Expected ~{detune_cents}¢ but got {cents}¢ (still same note, visual feedback usable)"
+    assert abs(cents - detune_cents) < 50.0, (
+        f"Expected ~{detune_cents}¢ but got {cents}¢ (still same note, visual feedback usable)"
+    )
 
     # Strobe phase delta should be non-zero and same sign as detune
     delta = float(getattr(window.strobe, "_phase_delta_hz", 0.0))
@@ -91,7 +92,9 @@ def test_live_analysis_synthetic_detuned_tone_updates_cents_and_widgets(qtbot) -
 
     # Keyboard must have highlighted the correct MIDI
     current = getattr(window.keyboard, "_current", None)
-    assert abs(current - midi) <= 1, f"Keyboard highlighted near MIDI {midi} (got {current}) — acceptable for live single-frame with possible hammer/low partial lock"
+    assert abs(current - midi) <= 1, (
+        f"Keyboard highlighted near MIDI {midi} (got {current}) — acceptable for live single-frame with possible hammer/low partial lock"
+    )
 
     # Spectrum should have received a non-trivial frame (we don't assert exact values)
     # Just ensure no crash and that set_detected_pitch was called with sensible value
@@ -123,10 +126,14 @@ def test_live_analysis_in_tune_synthetic_zeroes_cents(qtbot) -> None:
     window._run_live_analysis()
 
     cents = float(getattr(window.cents_display, "_cents", 99.0))
-    assert abs(cents) < 50.0, f"In-tune synthetic should yield |cents| < 20 (got {cents}) — usable for strobe zeroing"
+    assert abs(cents) < 50.0, (
+        f"In-tune synthetic should yield |cents| < 20 (got {cents}) — usable for strobe zeroing"
+    )
 
     delta = float(getattr(window.strobe, "_phase_delta_hz", 99.0))
-    assert abs(delta) < 15.0, "Delta for synthetic should be small-ish (single frame on decaying tail)"
+    assert abs(delta) < 15.0, (
+        "Delta for synthetic should be small-ish (single frame on decaying tail)"
+    )
 
     # Keyboard should still pick A4 (69)
     assert abs(getattr(window.keyboard, "_current", 0) - 69) <= 1

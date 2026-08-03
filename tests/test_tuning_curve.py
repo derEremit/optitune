@@ -26,8 +26,8 @@ import pytest
 from optitune.model import Key, Piano
 from optitune.solvers import (
     compute_basic_tuning_curve,
-    compute_heuristic_stretch_curve,
     compute_beat_rate_for_interval,
+    compute_heuristic_stretch_curve,
 )
 
 
@@ -68,10 +68,10 @@ def test_default_curve_has_railsback_shape() -> None:
     assert curve[48] == pytest.approx(0.0, abs=0.01)  # A4 (MIDI 69) pinned at zero
 
     # Bass should be negative, treble positive (characteristic Railsback)
-    assert curve[0] < -5.0   # A0
-    assert curve[20] < 0.0   # still bass-ish
-    assert curve[60] > 0.0   # treble
-    assert curve[87] > 3.0   # C8
+    assert curve[0] < -5.0  # A0
+    assert curve[20] < 0.0  # still bass-ish
+    assert curve[60] > 0.0  # treble
+    assert curve[87] > 3.0  # C8
 
 
 def test_solver_recovers_reasonable_curve_from_measured_bs() -> None:
@@ -87,12 +87,29 @@ def test_solver_recovers_reasonable_curve_from_measured_bs() -> None:
     # B roughly log-linear with MIDI in real instruments
     measured_midis = [28, 35, 42, 48, 52, 57, 60, 64, 69, 76, 84, 92, 100]
     # Corresponding B values (slightly exaggerated for test visibility)
-    measured_bs = [0.00012, 0.00015, 0.00022, 0.00028, 0.00035, 0.00042,
-                   0.00055, 0.00075, 0.0011, 0.0018, 0.0032, 0.0065, 0.012]
+    measured_bs = [
+        0.00012,
+        0.00015,
+        0.00022,
+        0.00028,
+        0.00035,
+        0.00042,
+        0.00055,
+        0.00075,
+        0.0011,
+        0.0018,
+        0.0032,
+        0.0065,
+        0.012,
+    ]
 
     for m, b in zip(measured_midis, measured_bs, strict=True):
         # f0 is the "current" (detuned) pitch — solver ignores it for curve, only uses B
-        f0 = 440.0 * (2.0 ** ((m - 69) / 12.0)) * (1.0 + np.random.default_rng(42).uniform(-0.08, 0.08))
+        f0 = (
+            440.0
+            * (2.0 ** ((m - 69) / 12.0))
+            * (1.0 + np.random.default_rng(42).uniform(-0.08, 0.08))
+        )
         p.set_key(Key(midi=m, measured_f0=f0, measured_b=b))
 
     curve = compute_basic_tuning_curve(p)
@@ -133,6 +150,7 @@ def test_curve_tolerance_on_central_keys() -> None:
 # Strong regression / improvement test for the weighted beat-rate LS solver (spec §6.2)
 # --------------------------------------------------------------------------------------
 
+
 def _fit_log_linear_b(measured_midis: list[int], measured_bs: list[float]) -> tuple[float, float]:
     """Duplicate the exact fit used by both solvers (for test evaluation only)."""
     ms = np.asarray(measured_midis, dtype=float)
@@ -145,8 +163,8 @@ def _fit_log_linear_b(measured_midis: list[int], measured_bs: list[float]) -> tu
 
 def _avg_abs_octave_beat_rate(
     curve: list[float],
-    b_values: np.ndarray,          # length 88
-    f0_et: np.ndarray,             # length 88
+    b_values: np.ndarray,  # length 88
+    f0_et: np.ndarray,  # length 88
     octave_pairs: list[tuple[int, int]],
 ) -> float:
     """Mean |β| (Hz) over 2:1 and 4:2 octaves for the supplied curve."""
@@ -178,8 +196,18 @@ def test_beat_rate_ls_solver_substantially_reduces_octave_beat_rates() -> None:
     # 9 measured keys spread across the compass (realistic for a quick pitch-raise pass)
     measured_midis = [26, 33, 40, 47, 55, 62, 69, 78, 90, 100]
     # Realistic increasing B (log-linear-ish, treble much more inharmonic)
-    measured_bs = [0.00009, 0.00013, 0.00019, 0.00027, 0.00038,
-                   0.00052, 0.00085, 0.0017, 0.0038, 0.0095]
+    measured_bs = [
+        0.00009,
+        0.00013,
+        0.00019,
+        0.00027,
+        0.00038,
+        0.00052,
+        0.00085,
+        0.0017,
+        0.0038,
+        0.0095,
+    ]
 
     for m, b in zip(measured_midis, measured_bs, strict=True):
         f0 = 440.0 * (2.0 ** ((m - 69) / 12.0))
@@ -212,10 +240,14 @@ def test_beat_rate_ls_solver_substantially_reduces_octave_beat_rates() -> None:
     assert abs(new_curve[48]) < 0.01
 
     # Report the numbers for the final write-up
-    print(f"\n[Comparison on synthetic 10-key B set] ET |β|={et_beta:.4f} Hz   Heuristic={old_beta:.4f} Hz   New LS={new_beta:.4f} Hz")
+    print(
+        f"\n[Comparison on synthetic 10-key B set] ET |β|={et_beta:.4f} Hz   Heuristic={old_beta:.4f} Hz   New LS={new_beta:.4f} Hz"
+    )
 
     # The LS solver must be better than the legacy heuristic
-    assert new_beta < old_beta, f"New LS solver {new_beta:.4f} should beat the heuristic {old_beta:.4f} on octave intervals"
+    assert new_beta < old_beta, (
+        f"New LS solver {new_beta:.4f} should beat the heuristic {old_beta:.4f} on octave intervals"
+    )
 
     # Also verify the curve still has the expected musical shape
     assert new_curve[0] < -3.0

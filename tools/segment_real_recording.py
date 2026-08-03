@@ -15,20 +15,20 @@ The export path is what you run after any improvement to the noise-gate logic.
 It produces exactly what the pytest real_piano tests and analyze.py expect.
 """
 
-from pathlib import Path
 import argparse
 import json
 import shutil
+from pathlib import Path
+
 import numpy as np
 from scipy.io import wavfile
-from scipy.signal import find_peaks
 
 # ---------------- Configuration ----------------
 INPUT_FILE = Path("testmaterial/c and f.wav")
 OUTPUT_DIR = Path("testmaterial/recordings_clean")
-NOISE_FLOOR_DB = -50.0          # Noise gate threshold (a bit lower to catch soft high notes)
-MIN_NOTE_DURATION = 0.35        # seconds - relaxed for short high notes
-MIN_GAP = 0.18                  # minimum silence between notes
+NOISE_FLOOR_DB = -50.0  # Noise gate threshold (a bit lower to catch soft high notes)
+MIN_NOTE_DURATION = 0.35  # seconds - relaxed for short high notes
+MIN_GAP = 0.18  # minimum silence between notes
 HOP_SIZE = 512
 FRAME_SIZE = 1024
 
@@ -49,8 +49,8 @@ def compute_rms_envelope(signal, sr, hop_size, frame_size):
     """Compute RMS energy envelope."""
     rms = []
     for i in range(0, len(signal) - frame_size, hop_size):
-        frame = signal[i:i + frame_size]
-        rms.append(np.sqrt(np.mean(frame ** 2)))
+        frame = signal[i : i + frame_size]
+        rms.append(np.sqrt(np.mean(frame**2)))
     return np.array(rms)
 
 
@@ -70,7 +70,7 @@ def find_note_boundaries(rms, sr, hop_size, noise_floor, min_duration, min_gap):
         offsets = np.append(offsets, len(rms) - 1)
 
     notes = []
-    for on, off in zip(onsets, offsets):
+    for on, off in zip(onsets, offsets, strict=False):
         duration = (off - on) * hop_size / sr
         if duration < min_duration:
             continue
@@ -163,13 +163,10 @@ def segment_master_recording() -> tuple[list[dict], np.ndarray, int]:
     print("Loading recording...")
     sr, data = wavfile.read(INPUT_FILE)
 
-    if len(data.shape) > 1:
-        mono = data.mean(axis=1).astype(np.float32)
-    else:
-        mono = data.astype(np.float32)
+    mono = data.mean(axis=1).astype(np.float32) if len(data.shape) > 1 else data.astype(np.float32)
 
     mono = mono / np.max(np.abs(mono))
-    print(f"Loaded {len(mono)/sr:.2f} seconds @ {sr} Hz")
+    print(f"Loaded {len(mono) / sr:.2f} seconds @ {sr} Hz")
 
     noise_floor = db_to_linear(NOISE_FLOOR_DB)
     rms = compute_rms_envelope(mono, sr, HOP_SIZE, FRAME_SIZE)
@@ -220,7 +217,9 @@ def segment_master_recording() -> tuple[list[dict], np.ndarray, int]:
         }
         metadata.append(meta)
 
-        print(f"{label:6} | dominant={dom:7.1f} Hz | {meta['start_time']:6.2f}s – {meta['end_time']:.2f}s  ({meta['duration']:.2f}s)")
+        print(
+            f"{label:6} | dominant={dom:7.1f} Hz | {meta['start_time']:6.2f}s - {meta['end_time']:.2f}s  ({meta['duration']:.2f}s)"
+        )
 
     with open(OUTPUT_DIR / "metadata.json", "w") as f:
         json.dump(metadata, f, indent=2)
@@ -252,7 +251,7 @@ def export_to_test_fixtures(metadata: list[dict]) -> None:
             {
                 "filename": f"{label}.wav",
                 "note_label": label,
-                "approx_midi": m["expected_midi"],   # now trusted (order-based)
+                "approx_midi": m["expected_midi"],  # now trusted (order-based)
                 "start_time": m["start_time"],
                 "end_time": m["end_time"],
                 "duration": m["duration"],
@@ -263,7 +262,7 @@ def export_to_test_fixtures(metadata: list[dict]) -> None:
     with open(test_meta_path, "w") as f:
         json.dump(segments_json, f, indent=2)
 
-    print(f"\n=== Exported to test fixtures ===")
+    print("\n=== Exported to test fixtures ===")
     print(f"  WAVs copied to : {test_recordings_dir}")
     print(f"  segments.json  : {test_meta_path}")
     print(f"  {len(segments_json)} recordings with correct ground-truth MIDI labels.")

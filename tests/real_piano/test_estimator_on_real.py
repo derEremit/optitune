@@ -26,17 +26,14 @@ import pytest
 from optitune.dsp import (
     find_spectral_peaks,
     hz_to_midi,
-    midi_to_note_name,
     pfd_estimate_f0_b,
 )
-
 from tests.real_piano.loader import list_recordings, load_recording
-
 
 pytestmark = pytest.mark.real_piano
 
 
-def _analyze_segment(audio: "np.ndarray", sr: int) -> tuple[float, float]:
+def _analyze_segment(audio: np.ndarray, sr: int) -> tuple[float, float]:
     """Run the same core estimator the live app uses on the middle 60% of the note."""
     n = len(audio)
     start = int(n * 0.20)
@@ -51,9 +48,7 @@ def _analyze_segment(audio: "np.ndarray", sr: int) -> tuple[float, float]:
     power = np.abs(spec) ** 2
     freqs = np.fft.rfftfreq(len(seg), 1.0 / sr)
 
-    peak_fs, peak_as = find_spectral_peaks(
-        freqs, power, min_prominence_db=12.0, max_peaks=20
-    )
+    peak_fs, peak_as = find_spectral_peaks(freqs, power, min_prominence_db=12.0, max_peaks=20)
 
     if len(peak_fs) == 0:
         return 0.0, 0.0
@@ -106,7 +101,9 @@ def test_real_piano_estimator_baseline():
     print("\n" + "=" * 78)
     print("REAL PIANO ESTIMATOR BASELINE (current production code)")
     print("=" * 78)
-    print(f"{'Note':<6} | {'Expected':>8} | {'Detected':>8} | {'Err':>4} | {'f0 (Hz)':>9} | {'B':>10}")
+    print(
+        f"{'Note':<6} | {'Expected':>8} | {'Detected':>8} | {'Err':>4} | {'f0 (Hz)':>9} | {'B':>10}"
+    )
     print("-" * 78)
 
     for r in results:

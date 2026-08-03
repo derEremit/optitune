@@ -51,48 +51,22 @@ All of the following are true:
 
 ## Milestone 0 — Repo & code-health baseline (target: `0.2.0`)
 
-The working tree currently has uncommitted WIP (the whole §15 resumption work),
-88 ruff errors, 30 mypy errors, and 7 stale xfail markers. Lock in a clean baseline
-before feature work.
+~~Baseline was dirty (WIP, ruff/mypy noise, stale xfails).~~ **Done 2026-08-03** —
+`0.2.0` shipped as the clean baseline.
 
-- [ ] **Commit the WIP** — `src/optitune/recording/auto_record.py`,
-      `src/optitune/ui/main_window.py`, `tests/real_piano/test_recording_workflows.py`,
-      `tests/test_auto_record.py`, `uv.lock`, plus untracked `CLAUDE.md`,
-      `docs/expectation_driven_onset.md`, `.index.yaml`, `CHANGELOG.md`, this file.
-      Verify first: `uv run pytest -q --ignore=tests/real_piano` green.
-- [ ] **Ruff clean** — `uv run ruff check --fix` (23 auto-fixable), then hand-fix
-      the rest (top offenders: RUF002/RUF003 ambiguous unicode in docstrings,
-      F401 unused imports, E402/I001 import ordering, SIM105/SIM108/SIM102).
-      Biggest files: `tests/real_piano/test_recording_workflows.py` (~17),
-      `src/optitune/ui/main_window.py` (~24), `src/optitune/recording/auto_record.py`,
-      `tools/segment_real_recording.py`. Then `uv run ruff format .`.
-- [ ] **Mypy clean** — 30 errors in 11 files. Known concrete ones:
-      `main_window.py:599` (`int | None` passed to `expected_pc: int`),
-      `main_window.py:734`/`1384` (`no-any-return`), `main_window.py:1630`
-      (`closeEvent(event: object)` → `QCloseEvent`). Fix code, not configs, except
-      where PySide6 stubs genuinely lack the symbol.
-- [ ] **Harden CI** (`.github/workflows/ci.yml`) — remove `|| true` from the mypy
-      step once clean; add `pytest --strict-markers` is already on; keep the
-      `-m "not real_piano"` selection.
-- [ ] **Fix xfail drift** — `tests/dsp/test_synth.py::test_matrix_row_recovery`:
-      7 params XPASS (P1, S1, S2, C1, C2, C3, N1) while P2, H1, H2, B1 still fail.
-      Scope the xfail marker to only the 4 genuinely-failing extreme cases
-      (per-param `pytest.param(..., marks=pytest.mark.xfail(strict=True))`) so
-      regressions in the 7 recovered cases fail loudly. Run:
-      `uv run pytest tests/dsp/test_synth.py -q` → expect 7 pass, 4 xfail, 0 xpass.
-- [ ] **README refresh** — it still says "Phase 0 complete / Phase 1 active".
-      Rewrite Current Status to match reality (Phases 0–4 done, expectation-driven
-      recording in progress), point to `CHANGELOG.md` + this roadmap.
-- [ ] **`[DIAG]` prints → `logging`** — replace bare `print()` diagnostics in
-      `main_window.py` / `auto_record.py` with a module logger; keep `OPTITUNE_DIAG`
-      as the verbosity switch (maps to log level). Diagnostic tests capture via
-      `caplog` or a stream handler instead of stdout scraping — keep the
-      machine-readable `SUMMARY:` line on stdout for scripting.
-- [ ] Update `.index.yaml` `summary` to mention 1.x roadmap; commit; bump version
-      in `pyproject.toml` to `0.2.0`.
+- [x] **Commit the WIP** — expectation-driven recording + M0 health fixes.
+- [x] **Ruff clean** — `ruff check .` + `ruff format --check .` green.
+- [x] **Mypy clean** — `mypy src/optitune` green (30 → 0).
+- [x] **Harden CI** — mypy step no longer soft-fails with `|| true`.
+- [x] **Fix xfail drift** — per-param strict xfail for P2/H1/H2 only; B1 recovered;
+      deterministic matrix seeds (no `hash()` flakiness). Expect 0 xpass.
+- [x] **README refresh** — status matches Phases 0–4 done + scale-recording WIP.
+- [x] **`[DIAG]` prints → `logging`** — module loggers in `main_window` /
+      `auto_record`; `OPTITUNE_DIAG` still enables console stream; `SUMMARY:` on stdout.
+- [x] Update `.index.yaml` + bump version to `0.2.0`.
 
 **Milestone verification:** `uv run ruff check . && uv run ruff format --check . &&
-uv run mypy src/optitune && uv run pytest -q -m "not real_piano"` all clean.
+uv run mypy src/optitune && uv run pytest -q -m "not real_piano"` all clean. ✅
 
 ---
 

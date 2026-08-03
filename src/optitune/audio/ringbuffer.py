@@ -56,7 +56,7 @@ class RingBuffer:
                 # wraps
                 first = self.max_samples - self._head
                 self._data[self._head :] = samples[:first]
-                self._data[: end] = samples[first:]
+                self._data[:end] = samples[first:]
 
             # Update count and head
             if self._count + n > self.max_samples:

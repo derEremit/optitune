@@ -7,6 +7,7 @@ Covers requirements from synth_test_matrix.md + spec §3.5:
 - Works for all 6 matrix conditions (perfect, high-B, noisy, bass, etc.).
 - Deterministic, seeded inputs.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -26,7 +27,7 @@ def test_parabolic_interpolation_exact_formula():
     """
     logm = np.array([0.1, 1.0, 0.4])
     k = 1
-    delta, log_peak = parabolic_interpolation(logm, k)
+    delta, _log_peak = parabolic_interpolation(logm, k)
     y1, y2, y3 = logm
     denom = y1 - 2 * y2 + y3
     expected_delta = 0.5 * (y1 - y3) / denom if abs(denom) > 1e-12 else 0.0
@@ -64,7 +65,10 @@ def test_parabolic_recovers_ideal_quadratic():
 
 # --- PFD estimator tests on known (f0, B) ---
 
-def make_synthetic_peak_list(f0: float, B: float, n_max: int = 12, noise_cents: float = 0.0, rng=None):
+
+def make_synthetic_peak_list(
+    f0: float, B: float, n_max: int = 12, noise_cents: float = 0.0, rng=None
+):
     """Helper: return (peak_freqs, peak_amps) exactly from model + optional tiny freq jitter."""
     if rng is None:
         rng = np.random.default_rng(0)
@@ -77,12 +81,15 @@ def make_synthetic_peak_list(f0: float, B: float, n_max: int = 12, noise_cents: 
     return fns, amps
 
 
-@pytest.mark.parametrize("f0,B", [
-    (27.5, 0.00005),
-    (261.626, 0.0008),
-    (4186.01, 0.025),
-    (27.5, 0.00012),
-])
+@pytest.mark.parametrize(
+    "f0,B",
+    [
+        (27.5, 0.00005),
+        (261.626, 0.0008),
+        (4186.01, 0.025),
+        (27.5, 0.00012),
+    ],
+)
 def test_pfd_recovers_clean_synthetic(f0, B):
     """On noise-free synthetic partial list, PFD must recover f0 to <<0.01 cent and B to <<1%."""
     peaks_f, peaks_a = make_synthetic_peak_list(f0, B, n_max=10, noise_cents=0.0)
@@ -90,7 +97,7 @@ def test_pfd_recovers_clean_synthetic(f0, B):
     assert cents(f0_est, f0) < 0.01
     if B > 1e-5:
         rel_err = abs(B_est - B) / B
-        assert rel_err < 0.005, f"B rel err {rel_err*100:.2f}% for B={B}"
+        assert rel_err < 0.005, f"B rel err {rel_err * 100:.2f}% for B={B}"
 
 
 def test_pfd_on_matrix_like_conditions():
@@ -106,7 +113,7 @@ def test_pfd_on_matrix_like_conditions():
         (440.0, 0.0006, 3.0, -18.0, 0.6, 0.08),
     ]
     rng = np.random.default_rng(99)
-    for f0, B, det, snr, tol_c, tol_b in cases:
+    for f0, B, _det, snr, tol_c, tol_b in cases:
         peaks_f, peaks_a = make_synthetic_peak_list(f0, B, n_max=8, noise_cents=0.0)
         if snr is not None:
             noise_c = 0.4 if snr < -15 else 0.1
@@ -126,7 +133,7 @@ def test_pfd_ignores_phantom_and_outliers():
     peaks_f = np.append(peaks_f, [12000.0])
     peaks_a = np.append(peaks_a, [10.0])
     f0_est, B_est = pfd_estimate_f0_b(peaks_f, peaks_a, f0_guess=f0)
-    assert cents(f0_est, f0) < 5.0   # realistic for extreme high-B + outlier
+    assert cents(f0_est, f0) < 5.0  # realistic for extreme high-B + outlier
     assert 0.0 <= B_est <= 0.30
 
 

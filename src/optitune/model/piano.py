@@ -57,10 +57,14 @@ class Piano:
         return 0.0
 
     def has_measurements(self) -> bool:
-        return any(k.measured_b is not None or k.measured_f0 is not None for k in self.keys.values())
+        return any(
+            k.measured_b is not None or k.measured_f0 is not None for k in self.keys.values()
+        )
 
     def measured_count(self) -> int:
-        return sum(1 for k in self.keys.values() if k.measured_b is not None or k.measured_f0 is not None)
+        return sum(
+            1 for k in self.keys.values() if k.measured_b is not None or k.measured_f0 is not None
+        )
 
     # ---------------- JSON persistence (simple, human-readable) ----------------
 

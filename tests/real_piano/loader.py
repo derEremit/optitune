@@ -50,17 +50,12 @@ def load_recording(name: str) -> tuple[np.ndarray, int, dict[str, Any]]:
 
     if not wav_path.exists():
         available = list_recordings()
-        raise FileNotFoundError(
-            f"Recording '{name}' not found. Available: {available}"
-        )
+        raise FileNotFoundError(f"Recording '{name}' not found. Available: {available}")
 
     sr, data = wavfile.read(wav_path)
 
     # Convert to mono float32, normalized
-    if len(data.shape) > 1:
-        audio = data.mean(axis=1).astype(np.float32)
-    else:
-        audio = data.astype(np.float32)
+    audio = data.mean(axis=1).astype(np.float32) if len(data.shape) > 1 else data.astype(np.float32)
 
     max_abs = np.max(np.abs(audio))
     if max_abs > 0:
@@ -72,7 +67,7 @@ def load_recording(name: str) -> tuple[np.ndarray, int, dict[str, Any]]:
 
     meta = next(
         (m for m in all_meta if m["filename"] == f"{name}.wav"),
-        {"filename": f"{name}.wav", "note_label": name}
+        {"filename": f"{name}.wav", "note_label": name},
     )
 
     return audio, sr, meta

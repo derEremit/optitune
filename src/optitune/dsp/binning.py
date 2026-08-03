@@ -1,10 +1,11 @@
 """
-Log-cent binning (10 Hz – 10 kHz @ 1 cent) + IEC 61672:2003 A-weighting.
+Log-cent binning (10 Hz - 10 kHz @ 1 cent) + IEC 61672:2003 A-weighting.
 
 Exact implementation of piano_tuner_implementation_spec.md §3.4.
 We use N_BINS = 12000 as the contract (spec rounds to this value).
 Vectorized production path (np.add.at) + slow reference for verification.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -25,7 +26,7 @@ def bin_index(f_hz: float | np.ndarray) -> int | np.ndarray:
         m = np.floor(1200.0 * np.log2(np.maximum(f, F_LO) / F_LO))
     if np.isscalar(f_hz):
         return int(np.clip(m, 0, N_BINS - 1).item())
-    return np.clip(m, 0, N_BINS - 1).astype(int)
+    return np.asarray(np.clip(m, 0, N_BINS - 1), dtype=int)
 
 
 def bin_center(m: int | np.ndarray) -> float | np.ndarray:
@@ -34,7 +35,7 @@ def bin_center(m: int | np.ndarray) -> float | np.ndarray:
     f = 10.0 * 2.0 ** (m_arr / 1200.0)
     if np.isscalar(m):
         return float(f.item())
-    return f
+    return np.asarray(f)
 
 
 def a_weight_db(f: float | np.ndarray) -> float | np.ndarray:
@@ -44,16 +45,12 @@ def a_weight_db(f: float | np.ndarray) -> float | np.ndarray:
     f_arr = np.asarray(f, dtype=float)
     f2 = f_arr * f_arr
     num = (12200.0**2) * (f2**2)
-    den = (
-        (f2 + 20.6**2)
-        * np.sqrt((f2 + 107.7**2) * (f2 + 737.9**2))
-        * (f2 + 12200.0**2)
-    )
+    den = (f2 + 20.6**2) * np.sqrt((f2 + 107.7**2) * (f2 + 737.9**2)) * (f2 + 12200.0**2)
     Ra = num / np.maximum(den, 1e-300)
     aw = 2.0 + 20.0 * np.log10(np.maximum(Ra, 1e-300))
     if np.isscalar(f):
         return float(aw.item())
-    return aw
+    return np.asarray(aw)
 
 
 def bin_spectrum_vectorized(freqs: np.ndarray, power: np.ndarray) -> np.ndarray:
@@ -62,7 +59,7 @@ def bin_spectrum_vectorized(freqs: np.ndarray, power: np.ndarray) -> np.ndarray:
     Clips indices safely.
     """
     L = np.zeros(N_BINS, dtype=np.float64)
-    idx = bin_index(freqs)
+    idx = np.asarray(bin_index(freqs), dtype=int)
     np.add.at(L, idx, power.astype(np.float64, copy=False))
     return L
 
@@ -70,10 +67,10 @@ def bin_spectrum_vectorized(freqs: np.ndarray, power: np.ndarray) -> np.ndarray:
 def slow_bin_spectrum(freqs: np.ndarray, power: np.ndarray) -> np.ndarray:
     """Pure Python reference for tests."""
     L = np.zeros(N_BINS, dtype=np.float64)
-    idx = bin_index(freqs)
-    for i, p in zip(idx, power):
-        if 0 <= i < N_BINS:
-            L[i] += float(p)
+    idx = np.asarray(bin_index(freqs), dtype=int)
+    for i, p in zip(idx, power, strict=False):
+        if 0 <= int(i) < N_BINS:
+            L[int(i)] += float(p)
     return L
 
 

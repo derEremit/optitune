@@ -5,6 +5,7 @@ Formulas from piano_tuner_implementation_spec.md §3.5 and §2.6.
 Candidate search over low-frequency peaks makes it robust for bass, high-B, and noisy cases
 while still recovering synthetic ground truth to the required tolerances.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -13,13 +14,11 @@ from scipy.signal import find_peaks
 
 def cents(f_est: float, f_true: float) -> float:
     if f_true <= 0 or f_est <= 0:
-        return np.inf
-    return 1200.0 * np.log2(f_est / f_true)
+        return float(np.inf)
+    return float(1200.0 * np.log2(f_est / f_true))
 
 
-def parabolic_interpolation(
-    log_mag: np.ndarray, peak_idx: int | np.integer
-) -> tuple[float, float]:
+def parabolic_interpolation(log_mag: np.ndarray, peak_idx: int | np.integer) -> tuple[float, float]:
     n = len(log_mag)
     k = int(peak_idx)
     if not (1 <= k < n - 1):
@@ -30,10 +29,7 @@ def parabolic_interpolation(
     y3 = float(log_mag[k + 1])
 
     denom = y1 - 2.0 * y2 + y3
-    if abs(denom) < 1e-14:
-        delta = 0.0
-    else:
-        delta = 0.5 * (y1 - y3) / denom
+    delta = 0.0 if abs(denom) < 1e-14 else 0.5 * (y1 - y3) / denom
     delta = float(np.clip(delta, -0.5, 0.5))
     log_peak = y2 - 0.25 * (y1 - y3) * delta
     return delta, log_peak
@@ -90,7 +86,7 @@ def _fit_f0_b_linear(ns: np.ndarray, fms: np.ndarray) -> tuple[float, float]:
     if len(ns) < 2:
         return float(fms[0]) if len(fms) else 440.0, 0.0003
     ys = (fms / ns) ** 2
-    xs = ns ** 2
+    xs = ns**2
     X = np.column_stack([np.ones_like(xs), xs])
     sol, *_ = np.linalg.lstsq(X, ys, rcond=None)
     a, b = sol
@@ -142,7 +138,7 @@ def pfd_estimate_f0_b(
         for f in pf:
             if f < 18 or f > 14000:
                 continue
-            n = int(round(f / f1))
+            n = round(f / f1)
             if 1 <= n <= max_n:
                 ns_list.append(n)
                 fms_list.append(f)
@@ -156,9 +152,15 @@ def pfd_estimate_f0_b(
         f0, B = _fit_f0_b_linear(ns, fms)
 
         model_fs = ns * f0 * np.sqrt(1.0 + B * ns * ns)
-        residuals_cents = np.abs([cents(mf, mf_model) for mf, mf_model in zip(fms, model_fs)])
+        residuals_cents = np.abs(
+            [cents(mf, mf_model) for mf, mf_model in zip(fms, model_fs, strict=False)]
+        )
         inliers = np.sum(np.array(residuals_cents) < 25.0)
-        residual_penalty = np.mean(residuals_cents[: min(8, len(residuals_cents))]) if len(residuals_cents) else 100
+        residual_penalty = (
+            float(np.mean(residuals_cents[: min(8, len(residuals_cents))]))
+            if len(residuals_cents)
+            else 100.0
+        )
 
         guess_bonus = 0.0
         if f0_guess is not None:
@@ -170,7 +172,7 @@ def pfd_estimate_f0_b(
             else:
                 guess_bonus = -80
 
-        score = inliers * 10 - residual_penalty + guess_bonus
+        score = float(inliers) * 10.0 - residual_penalty + guess_bonus
 
         if score > best_score:
             best_score = score
@@ -185,6 +187,6 @@ def pfd_estimate_f0_b(
             # accept only if reasonable
             if abs(cents(cand, f0_guess)) < 80:
                 best_f0 = cand
-                _, best_B = _fit_f0_b_linear(np.array([1., 2.]), np.array([cand, 2*cand]))
+                _, best_B = _fit_f0_b_linear(np.array([1.0, 2.0]), np.array([cand, 2 * cand]))
 
     return best_f0, best_B

@@ -8,6 +8,7 @@ Per docs/synth_test_matrix.md and piano_tuner_implementation_spec.md §3.4:
 - Round-trip property with synthetic tones (once synth ready).
 - All tests deterministic, fast, no hardware.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -26,6 +27,7 @@ from optitune.dsp.binning import (
 )
 
 # --- Exact formula unit tests ---
+
 
 def test_bin_constants_match_spec():
     """N_BINS = 12000 per contract (spec approximates the round)."""
@@ -81,6 +83,7 @@ def test_a_weight_db_vectorized_matches_scalar():
 
 # --- Reference slow vs fast ---
 
+
 def test_vectorized_binning_matches_slow_reference():
     rng = np.random.default_rng(123)
     freqs = rng.uniform(20, 8000, 5000)
@@ -103,6 +106,7 @@ def test_binning_add_at_collisions():
 
 # --- A-weight on binned ---
 
+
 def test_apply_a_weight_to_binned_shape_and_values():
     L = np.ones(N_BINS) * 1e-6
     L_weighted = apply_a_weight_to_binned(L)
@@ -113,6 +117,7 @@ def test_apply_a_weight_to_binned_shape_and_values():
 
 # --- Round-trip (uses 32k STFT as required; realistic main-lobe spread tolerated) ---
 
+
 @pytest.mark.synth_only
 def test_binning_roundtrip_fundamental_peak_location():
     from scipy.signal.windows import blackmanharris
@@ -120,7 +125,9 @@ def test_binning_roundtrip_fundamental_peak_location():
     from optitune.dsp.synth import generate_inharmonic_tone
 
     fs = 48000
-    y = generate_inharmonic_tone(69, detune_cents=0.0, B=0.00005, duration=1.0, fs=fs, seed=42, with_hammer=False)
+    y = generate_inharmonic_tone(
+        69, detune_cents=0.0, B=0.00005, duration=1.0, fs=fs, seed=42, with_hammer=False
+    )
 
     n = min(len(y), 32768)
     w = blackmanharris(n)
