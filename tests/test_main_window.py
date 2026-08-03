@@ -93,7 +93,7 @@ def test_live_analysis_synthetic_detuned_tone_updates_cents_and_widgets(qtbot) -
     # Keyboard must have highlighted the correct MIDI
     current = getattr(window.keyboard, "_current", None)
     assert abs(current - midi) <= 1, (
-        f"Keyboard highlighted near MIDI {midi} (got {current}) — acceptable for live single-frame with possible hammer/low partial lock"
+        f"Keyboard highlighted near MIDI {midi} (got {current}) - acceptable for live single-frame with possible hammer/low partial lock"
     )
 
     # Spectrum should have received a non-trivial frame (we don't assert exact values)
@@ -127,7 +127,7 @@ def test_live_analysis_in_tune_synthetic_zeroes_cents(qtbot) -> None:
 
     cents = float(getattr(window.cents_display, "_cents", 99.0))
     assert abs(cents) < 50.0, (
-        f"In-tune synthetic should yield |cents| < 20 (got {cents}) — usable for strobe zeroing"
+        f"In-tune synthetic should yield |cents| < 20 (got {cents}) - usable for strobe zeroing"
     )
 
     delta = float(getattr(window.strobe, "_phase_delta_hz", 99.0))

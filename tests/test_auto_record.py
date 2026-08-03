@@ -28,6 +28,31 @@ from optitune.recording.auto_record import (
 )
 
 
+def test_default_capture_duration_fits_scale_spacing():
+    """Scale notes are ~2-4 s apart; default capture must not overlap the next note."""
+    cfg = AutoRecordConfig()
+    assert 500 <= cfg.capture_duration_ms <= 1200
+
+
+def test_high_note_confirms_with_shorter_loud_streak():
+    """C6+ decays in ~150 ms; 3 consecutive loud ticks + attack rise must confirm."""
+    ctrl = AutoRecordController(AutoRecordConfig(onset_db_threshold=-28.0, capture_duration_ms=400))
+    ctrl.arm(84)  # C6
+    now = 1000.0
+    # Attack rise then short loud plateau (realistic high-note envelope)
+    ticks = [
+        (-40.0, 0.0),
+        (-12.0, 0.05),  # rise +28
+        (-14.0, 0.10),
+        (-16.0, 0.15),  # 3rd loud → should confirm
+    ]
+    event = None
+    for db, dt in ticks:
+        event = ctrl.on_level_tick(db, now + dt)
+    assert event == AutoRecordEvent.ONSET_CONFIRMED
+    assert ctrl.is_recording
+
+
 def test_initial_state_is_idle():
     ctrl = AutoRecordController()
     assert ctrl.phase == AutoRecordPhase.IDLE
@@ -75,7 +100,7 @@ def test_onset_confirmation_requires_sustained_level_above_threshold():
     assert event is None
     assert ctrl.phase == AutoRecordPhase.ARMED
 
-    # Clear attack (strong rise) into sustained loud — the recent-rise credit logic
+    # Clear attack (strong rise) into sustained loud - the recent-rise credit logic
     # requires a >= min_rise transient somewhere in the loud streak for confirmation.
     t = now + 0.1
     event = ctrl.on_level_tick(current_db=-12.0, now=t)  # strong +6 dB rise from prior -18

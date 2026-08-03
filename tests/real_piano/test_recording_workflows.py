@@ -80,6 +80,12 @@ def _stop_real_audio(window: OptiTuneMainWindow) -> None:
     """Stop the real sounddevice capture so we fully control what goes into the ringbuffer."""
     if window.audio_capture.is_running:
         window.audio_capture.stop()
+    # Stop Qt timers: they fire on wall-clock and desync ignore/capture when
+    # the master feed drives time.time from the audio playhead.
+    if getattr(window, "_level_timer", None) is not None:
+        window._level_timer.stop()
+    if getattr(window, "_analysis_timer", None) is not None:
+        window._analysis_timer.stop()
     window.ringbuffer.clear()
 
 
@@ -432,7 +438,7 @@ def test_record_full_ascending_C_scale_with_auto_advance(qtbot):
 
 
 def test_record_soft_high_note_C7(qtbot):
-    """High notes in the user's recording are short and softer — important regression case."""
+    """High notes in the user's recording are short and softer - important regression case."""
     window = _create_test_window(qtbot)
     _stop_real_audio(window)
 
@@ -644,25 +650,42 @@ def _feed_master_with_real_auto_advance(
 
     # Support fast "C series only" mode for quicker iteration (priority 7+)
     if series == "C" or os.environ.get("OPTITUNE_FAST_C", "0").lower() in ("1", "true", "yes"):
-        # Dynamic cutoff: find the first sustained low-energy gap after ~20s of
-        # performance time. This is more robust than a hard-coded timestamp.
+        # C7 ends ~30.7s; C→F gap is after that. Prefer metadata if present,
+        # else first sustained quiet gap after 28s (not 20s - that cuts off at C4).
         try:
-            win_samples = int(sr * 0.4)
-            gap_start = None
-            for i in range(int(sr * 20), len(audio) - win_samples, win_samples):
-                rms = float(np.sqrt(np.mean(audio[i : i + win_samples] ** 2)))
-                if rms < 0.0008:  # sustained quiet
-                    gap_start = i
-                    break
-            c_series_cutoff = gap_start + int(sr * 1.5) if gap_start is not None else int(sr * 29.0)
+            c7_end = None
+            try:
+                import json
+                from pathlib import Path
+
+                seg_path = Path(__file__).parent / "segments.json"
+                if seg_path.exists():
+                    for item in json.loads(seg_path.read_text()):
+                        if item.get("note_label") == "C7":
+                            c7_end = float(item.get("end_time", 0)) + 1.0
+                            break
+            except Exception:
+                c7_end = None
+
+            if c7_end is not None and c7_end > 10:
+                c_series_cutoff = int(sr * c7_end)
+            else:
+                win_samples = int(sr * 0.4)
+                gap_start = None
+                for i in range(int(sr * 28), len(audio) - win_samples, win_samples):
+                    rms = float(np.sqrt(np.mean(audio[i : i + win_samples] ** 2)))
+                    if rms < 0.0008:
+                        gap_start = i
+                        break
+                c_series_cutoff = (
+                    gap_start + int(sr * 1.0) if gap_start is not None else int(sr * 32.0)
+                )
         except Exception:
-            c_series_cutoff = int(sr * 29.0)
+            c_series_cutoff = int(sr * 32.0)
 
         audio = audio[:c_series_cutoff]
-        print(
-            "[Diagnostic] Running in C-series-only mode (dynamic gap detection)  [OPTITUNE_FAST_C or series='C']"
-        )
-        print("            (C1-C7 portion only — much faster iteration)")
+        print("[Diagnostic] Running in C-series-only mode  [OPTITUNE_FAST_C or series='C']")
+        print(f"            cutoff={c_series_cutoff / sr:.1f}s (C1-C7 portion)")
 
     captured_midis: list[int] = []
 
@@ -703,7 +726,7 @@ def _feed_master_with_real_auto_advance(
         time.time = real_time  # type: ignore[assignment]
 
     captured = len(captured_midis)
-    during_capture_rejects = 0  # filled below if we keep counters — see helper
+    during_capture_rejects = 0  # filled below if we keep counters - see helper
     # Re-read counters from helper via attributes set on window for SUMMARY
     during_capture_rejects = int(getattr(window, "_diag_during_rejects", 0))
     c_series_captured = int(getattr(window, "_diag_c_series", 0))
@@ -712,7 +735,7 @@ def _feed_master_with_real_auto_advance(
     probable_octave_errors = 0
 
     print("\n" + "=" * 80)
-    print(f"RUN FINISHED — Captured {captured} notes: {sorted(captured_midis)}")
+    print(f"RUN FINISHED - Captured {captured} notes: {sorted(captured_midis)}")
     print(f"  C-class captured (approx): {c_series_captured}")
     print(f"  F series started: {f_series_started}")
     print(f"  During-capture rejections observed: {during_capture_rejects}")
@@ -855,16 +878,13 @@ def test_play_c_series_only_with_real_auto_advance(qtbot):
     Raise the captured floor as estimator quality improves.
     """
     window = _prepare_clean_armed_window(qtbot, first_midi=24)
-    captured, captured_list = _feed_master_with_real_auto_advance(
-        window, qtbot, series="C"
-    )
+    captured, captured_list = _feed_master_with_real_auto_advance(window, qtbot, series="C")
     print(f"\n[C-series only] Captured {captured} notes: {sorted(captured_list)}")
 
-    # Floor raised as M1 estimator work lands. Target full C series (7 notes).
-    assert captured >= 2, (
-        f"Expected at least C1+C2 with armed-prior estimator; got {captured} {sorted(captured_list)}"
-    )
-    assert 24 in captured_list, f"C1 must be captured; got {sorted(captured_list)}"
+    # Deterministic floor after sim-time + timer stop + shorter capture (target: 7).
+    assert captured >= 3, f"Expected at least C1-C3; got {captured} {sorted(captured_list)}"
+    for need in (24, 36, 48):
+        assert need in captured_list, f"MIDI {need} missing; got {sorted(captured_list)}"
 
     window.close()
 

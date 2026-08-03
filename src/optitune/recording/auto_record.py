@@ -1,5 +1,5 @@
 """
-Auto-record controller — extracted pure(ish) state machine for the hands-free
+Auto-record controller - extracted pure(ish) state machine for the hands-free
 level-triggered recording workflow.
 
 This is the result of proper TDD after the user reported real-world breakage
@@ -62,7 +62,9 @@ class AutoRecordEvent(Enum):
 class AutoRecordConfig:
     onset_db_threshold: float = -28.0
     min_onset_confirmation_ms: int = 280
-    capture_duration_ms: int = 1800
+    # ~1.1 s is enough for f0/B and fits typical scale note spacing (~2-4 s).
+    # Longer windows (1.8 s) overlap the next note and desync the series.
+    capture_duration_ms: int = 1100
 
 
 class AutoRecordController:
@@ -199,8 +201,14 @@ class AutoRecordController:
             midi = self._target_midi or 60
             octave = (midi - 24) // 12
 
-            # High notes (C6+) confirm slightly faster; low/mid require a solid sustained attack.
-            needed_consecutive = 4 if octave >= 5 else 6
+            # High notes decay in a few 50 ms ticks - require fewer consecutive loud samples.
+            # C5 (oct 4): 4 ticks; C6+ (oct 5+): 3 ticks; low/mid: 6.
+            if octave >= 5:
+                needed_consecutive = 3
+            elif octave >= 4:
+                needed_consecutive = 4
+            else:
+                needed_consecutive = 6
 
             # Extra strictness after a recent capture (post-capture attack requirement)
             require_strong_attack = self._require_strong_attack_until > now

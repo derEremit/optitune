@@ -229,4 +229,6 @@ def test_production_estimate_with_armed_prior_c_series(name: str, expected: int)
     assert est["midi"] == expected, (
         f"{name}: midi={est['midi']} f_est={est['f_est']:.2f} (want {expected})"
     )
-    assert err <= 140.0, f"{name}: f0 err {err:.1f}¢ (f_est={est['f_est']:.2f} want ~{armed_hz:.2f})"
+    assert err <= 140.0, (
+        f"{name}: f0 err {err:.1f}¢ (f_est={est['f_est']:.2f} want ~{armed_hz:.2f})"
+    )

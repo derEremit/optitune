@@ -91,9 +91,7 @@ def estimate_pitch(
 
         def _pick_f0(f0_pfd: float, f_low: float, prior_hz: float) -> float:
             pfd_near = (
-                prior_hz > 20
-                and f0_pfd > 20
-                and abs(1200.0 * np.log2(f0_pfd / prior_hz)) < 80.0
+                prior_hz > 20 and f0_pfd > 20 and abs(1200.0 * np.log2(f0_pfd / prior_hz)) < 80.0
             )
             if f_low > 20 and f0_pfd > 20:
                 dc = 1200.0 * np.log2(f0_pfd / f_low)
@@ -115,17 +113,13 @@ def estimate_pitch(
             return hits
 
         # Run free PFD always; also armed PFD when recording a target.
-        f0_free_pfd, B_free = pfd_estimate_f0_b(
-            peak_fs, peak_as, f0_guess=free_guess, max_n=16
-        )
+        f0_free_pfd, B_free = pfd_estimate_f0_b(peak_fs, peak_as, f0_guess=free_guess, max_n=16)
         f0_free = _pick_f0(f0_free_pfd, f_low, free_guess)
         B = B_free
 
         if armed_midi is not None:
             armed_hz = midi_to_hz(armed_midi, a4)
-            f0_armed_pfd, B_armed = pfd_estimate_f0_b(
-                peak_fs, peak_as, f0_guess=armed_hz, max_n=16
-            )
+            f0_armed_pfd, B_armed = pfd_estimate_f0_b(peak_fs, peak_as, f0_guess=armed_hz, max_n=16)
             f0_armed = _pick_f0(f0_armed_pfd, f_low, armed_hz)
             armed_err = abs(1200.0 * np.log2(f0_armed / armed_hz)) if f0_armed > 20 else 1e9
             hits = _partial_hits(armed_hz)
@@ -134,19 +128,10 @@ def estimate_pitch(
             if armed_err < 80.0 and hits >= 2:
                 f0, B = f0_armed, B_armed
             else:
-                nearest_oct = (
-                    round(float(np.log2(f0_free / armed_hz))) if f0_free > 20 else 0
-                )
+                nearest_oct = round(float(np.log2(f0_free / armed_hz))) if f0_free > 20 else 0
                 folded = f0_free / (2.0**nearest_oct) if nearest_oct else f0_free
-                fold_err = (
-                    abs(1200.0 * np.log2(folded / armed_hz)) if folded > 20 else 1e9
-                )
-                if (
-                    nearest_oct != 0
-                    and abs(nearest_oct) <= 3
-                    and fold_err < 100.0
-                    and hits >= 2
-                ):
+                fold_err = abs(1200.0 * np.log2(folded / armed_hz)) if folded > 20 else 1e9
+                if nearest_oct != 0 and abs(nearest_oct) <= 3 and fold_err < 100.0 and hits >= 2:
                     f0, B = folded, B_armed
                 else:
                     # Different note (or unsupported armed) — trust free estimate
