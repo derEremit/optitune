@@ -49,6 +49,7 @@ from optitune.dsp import (
     midi_to_hz,
     midi_to_note_name,
 )
+from optitune.dsp.analysis_worker import AnalysisWorker, start_analysis_thread
 from optitune.dsp.note_follow import NoteFollowMode
 from optitune.model import Key, Piano
 from optitune.recording.auto_record import (
@@ -155,12 +156,22 @@ class OptiTuneMainWindow(QMainWindow):
         self._current_pfg_path: str | None = None
         self._session_dirty: bool = False
 
-        # Analysis state (Phase 3)
+        # Analysis state (Phase 3 / M6 worker)
         self._analysis_timer: QTimer | None = None
         self._level_timer: QTimer | None = None
         self._analysis_tick = 0
         self._last_f0_guess: float = 440.0  # for PFD anchoring across frames
         self._f0_tracker = F0Tracker(window=7)
+        self._analysis_thread = None
+        self._analysis_worker: AnalysisWorker | None = None
+        self._pending_analysis_audio: np.ndarray | None = None
+        self._pending_analysis_fs: float = 48000.0
+        # OPTITUNE_SYNC_ANALYSIS=1 forces GUI-thread analysis (tests can call _run_live_analysis)
+        self._use_analysis_worker = os.environ.get("OPTITUNE_SYNC_ANALYSIS", "").strip() not in (
+            "1",
+            "true",
+            "yes",
+        )
 
         # Phase 4: model + recording + curve
         self._last_est: dict | None = None
@@ -645,10 +656,86 @@ class OptiTuneMainWindow(QMainWindow):
         self._level_timer.timeout.connect(self._update_level_meter)
         self._level_timer.start(50)
 
-        # Real analysis - 100 ms gives good overlap on 32k windows while staying light
+        # Optional off-GUI analysis worker (M6)
+        if self._use_analysis_worker:
+            self._analysis_thread, self._analysis_worker = start_analysis_thread(self)
+            self._analysis_worker.frame_ready.connect(self._on_analysis_frame)
+            self._analysis_thread.start()
+
+        # Real analysis - 100 ms; timer schedules worker or runs sync
         self._analysis_timer = QTimer(self)
-        self._analysis_timer.timeout.connect(self._run_live_analysis)
+        self._analysis_timer.timeout.connect(self._tick_live_analysis)
         self._analysis_timer.start(100)
+
+    def _tick_live_analysis(self) -> None:
+        """Timer entry: schedule worker or run analysis on the GUI thread."""
+        if (
+            self._use_analysis_worker
+            and self._analysis_worker is not None
+            and self._analysis_thread is not None
+            and self._analysis_thread.isRunning()
+        ):
+            self._schedule_analysis_on_worker()
+        else:
+            self._run_live_analysis()
+
+    def _schedule_analysis_on_worker(self) -> None:
+        """Pull ring buffer and queue estimate_pitch on the analysis thread."""
+        try:
+            worker = self._analysis_worker
+            if worker is None:
+                return
+            fs = float(self.audio_capture.samplerate or 48000)
+            n = 32768
+            audio = self.ringbuffer.get_latest(n)
+            if len(audio) < 2048:
+                return
+            rms = float(np.sqrt(np.mean(audio * audio)))
+            if rms <= 0.0045:
+                # Idle: gentle UI decay on GUI thread (cheap)
+                cur = getattr(self.cents_display, "_cents", 0.0)
+                if abs(cur) > 0.2:
+                    self.cents_display.set_cents(cur * 0.55)
+                self.strobe.set_phase_delta_hz(0.0)
+                if self._analysis_tick % 4 == 0:
+                    self.spectrum.update_frame(np.array([100, 200]), np.array([1e-6, 1e-6]))
+                self._analysis_tick += 1
+                return
+
+            in_record_workflow = (
+                self._scale_pitch_class is not None
+                or self._auto_record_ctrl.is_armed
+                or self._auto_record_ctrl.is_recording
+            )
+            armed = self._record_selected_midi if in_record_workflow else None
+            # Snapshot for spectrum in the result handler
+            self._pending_analysis_audio = np.asarray(audio, dtype=np.float64).copy()
+            self._pending_analysis_fs = fs
+            worker.configure(
+                a4=float(self._initial_a4),
+                armed_midi=armed,
+                last_f0=float(self._last_f0_guess),
+                follow_mode=self._note_follow_mode,
+                locked_midi=self._follow_locked_midi,
+            )
+            worker.analyze.emit(self._pending_analysis_audio, fs)
+        except Exception:
+            pass
+
+    @Slot(object)
+    def _on_analysis_frame(self, est: object) -> None:
+        """GUI-thread slot: apply worker result to widgets + recording state."""
+        try:
+            if not isinstance(est, dict):
+                return
+            audio = self._pending_analysis_audio
+            fs = self._pending_analysis_fs
+            if audio is None or len(audio) < 256:
+                audio = self.ringbuffer.get_latest(32768)
+                fs = float(self.audio_capture.samplerate or 48000)
+            self._apply_analysis_result(est, audio, fs)
+        except Exception:
+            pass
 
     def _update_level_meter(self) -> None:
         """Poll ringbuffer for short window and update the level bar (0-100)."""
@@ -795,122 +882,106 @@ class OptiTuneMainWindow(QMainWindow):
 
     def _run_live_analysis(self) -> None:
         """
-        Phase 3/4 live analysis.
-        ... (same as before) ...
-        After computing ET-based est, we re-target using any active piano curve.
+        Synchronous live analysis (GUI thread).
+
+        Used by real-piano feed tests and OPTITUNE_SYNC_ANALYSIS=1.
+        Timer path prefers the AnalysisWorker when available.
         """
         try:
             fs = self.audio_capture.samplerate or 48000
             a4 = self._initial_a4
-
-            # ~0.68 s window - excellent resolution (~1.5 Hz bins), still responsive
             n = 32768
             audio = self.ringbuffer.get_latest(n)
             if len(audio) < 2048:
                 return
 
             rms = float(np.sqrt(np.mean(audio * audio)))
-            energy_high = rms > 0.0045  # audible but forgiving threshold for real piano/mic
-
-            if not energy_high:
-                # Gentle decay toward zero when idle
+            if rms <= 0.0045:
                 cur = getattr(self.cents_display, "_cents", 0.0)
                 if abs(cur) > 0.2:
                     self.cents_display.set_cents(cur * 0.55)
                 self.strobe.set_phase_delta_hz(0.0)
-                # fade spectrum a little by sending near-zero frame occasionally
                 if self._analysis_tick % 4 == 0:
                     self.spectrum.update_frame(np.array([100, 200]), np.array([1e-6, 1e-6]))
+                self._analysis_tick += 1
                 return
 
-            # --- Real DSP pitch estimation (still ET inside) ---
             est = self._estimate_pitch(audio, fs, a4)
-            f_est = float(est["f_est"])
-            midi = int(est["midi"])
-            f0_used = float(est.get("f0", f_est))
-
-            # Temporal tracking: reject one-off octave/partial spikes
-            tracked = self._f0_tracker.push(f0_used)
-            if (
-                tracked is not None
-                and tracked > 20
-                and abs(1200.0 * np.log2(f_est / tracked)) > 500.0
-            ):
-                f_est = tracked
-                f0_used = tracked
-                midi = round(hz_to_midi(f_est, a4))
-                armed = self._record_selected_midi
-                if armed is not None:
-                    armed_hz = midi_to_hz(armed, a4)
-                    if abs(1200.0 * np.log2(f_est / armed_hz)) <= self.SCALE_MODE_CENT_TOLERANCE:
-                        midi = armed
-
-            # Phase 4: re-target using curve if present (this is what makes the final test work)
-            target_hz = self._get_target_hz(midi, a4)
-            if f_est > 1 and target_hz > 1:
-                cents = 1200.0 * np.log2(f_est / target_hz)
-                delta_hz = f_est - target_hz
-            else:
-                cents = 0.0
-                delta_hz = 0.0
-
-            # Cache for recording workflow
-            self._last_est = {
-                **est,
-                "f_est": float(f_est),
-                "f0": float(f0_used),
-                "midi": int(midi),
-                "target_hz": float(target_hz),
-                "cents": float(cents),
-                "delta_hz": float(delta_hz),
-            }
-
-            # Update last guess for next-frame PFD stability
-            if 30 < f0_used < 6000:
-                self._last_f0_guess = f0_used
-
-            # Drive widgets (clip cents for display sanity)
-            clipped_cents = float(np.clip(cents, -55.0, 55.0))
-            self.cents_display.set_cents(clipped_cents)
-
-            # Strobe gets the true frequency error in Hz (positive = sharp → clockwise)
-            self.strobe.set_phase_delta_hz(float(delta_hz))
-            self.strobe.set_target_frequency(target_hz)
-
-            # Real spectrum data from the same FFT we already computed inside estimator
-            self._update_spectrum_from_audio(audio, fs, f_est)
-
-            # Keyboard highlight (detected/locked note)
-            forced = self._auto_record_ctrl.get_forced_visual_state()
-            if forced:
-                forced_midi, forced_state = forced
-                self.keyboard.set_key_state(forced_midi, forced_state)
-                self.keyboard.set_current_key(forced_midi)
-            else:
-                self.keyboard.set_current_key(midi)
-                self.keyboard.highlight_detected(midi)
-
-            # Extra safety: if we are in an auto-record phase, make absolutely sure
-            # the target key keeps the correct color even if other code touched the widget.
-            self._apply_auto_record_visual_force()
-
-            # Occasional status / note name
-            self._analysis_tick += 1
-            if self._analysis_tick % 12 == 0:
-                note_name = midi_to_note_name(midi)
-                curve_note = ""
-                if self._piano and self._piano.tuning_curve:
-                    off = self._piano.get_target_offset(midi)
-                    if abs(off) > 0.05:
-                        curve_note = f"  [curve {off:+.1f}¢]"
-                self.statusBar().showMessage(
-                    f"Tracking {note_name} ({midi})  {cents:+.1f} ¢   Δ{delta_hz:.2f} Hz{curve_note}",
-                    1800,
-                )
-
+            self._apply_analysis_result(est, audio, fs)
         except Exception:
-            # Analysis must never bring down the GUI or audio pipeline
             pass
+
+    def _apply_analysis_result(self, est: dict, audio: np.ndarray, fs: float) -> None:
+        """Shared post-estimate path: tracker, curve retarget, widgets, _last_est."""
+        a4 = self._initial_a4
+        f_est = float(est["f_est"])
+        midi = int(est["midi"])
+        f0_used = float(est.get("f0", f_est))
+
+        tracked = self._f0_tracker.push(f0_used)
+        if (
+            tracked is not None
+            and tracked > 20
+            and abs(1200.0 * np.log2(f_est / tracked)) > 500.0
+        ):
+            f_est = tracked
+            f0_used = tracked
+            midi = round(hz_to_midi(f_est, a4))
+            armed = self._record_selected_midi
+            if armed is not None:
+                armed_hz = midi_to_hz(armed, a4)
+                if abs(1200.0 * np.log2(f_est / armed_hz)) <= self.SCALE_MODE_CENT_TOLERANCE:
+                    midi = armed
+
+        target_hz = self._get_target_hz(midi, a4)
+        if f_est > 1 and target_hz > 1:
+            cents = 1200.0 * np.log2(f_est / target_hz)
+            delta_hz = f_est - target_hz
+        else:
+            cents = 0.0
+            delta_hz = 0.0
+
+        self._last_est = {
+            **est,
+            "f_est": float(f_est),
+            "f0": float(f0_used),
+            "midi": int(midi),
+            "target_hz": float(target_hz),
+            "cents": float(cents),
+            "delta_hz": float(delta_hz),
+        }
+
+        if 30 < f0_used < 6000:
+            self._last_f0_guess = f0_used
+
+        clipped_cents = float(np.clip(cents, -55.0, 55.0))
+        self.cents_display.set_cents(clipped_cents)
+        self.strobe.set_phase_delta_hz(float(delta_hz))
+        self.strobe.set_target_frequency(target_hz)
+        self._update_spectrum_from_audio(audio, fs, f_est)
+
+        forced = self._auto_record_ctrl.get_forced_visual_state()
+        if forced:
+            forced_midi, forced_state = forced
+            self.keyboard.set_key_state(forced_midi, forced_state)
+            self.keyboard.set_current_key(forced_midi)
+        else:
+            self.keyboard.set_current_key(midi)
+            self.keyboard.highlight_detected(midi)
+        self._apply_auto_record_visual_force()
+
+        self._analysis_tick += 1
+        if self._analysis_tick % 12 == 0:
+            note_name = midi_to_note_name(midi)
+            curve_note = ""
+            if self._piano and self._piano.tuning_curve:
+                off = self._piano.get_target_offset(midi)
+                if abs(off) > 0.05:
+                    curve_note = f"  [curve {off:+.1f}¢]"
+            self.statusBar().showMessage(
+                f"Tracking {note_name} ({midi})  {cents:+.1f} ¢   Δ{delta_hz:.2f} Hz{curve_note}",
+                1800,
+            )
 
     def _get_target_hz(self, midi: int, a4: float) -> float:
         """Phase 4: return ET frequency or ET + curve offset (the key change for solver integration)."""
@@ -1768,6 +1839,14 @@ class OptiTuneMainWindow(QMainWindow):
     def is_session_dirty(self) -> bool:
         return bool(getattr(self, "_session_dirty", False))
 
+    def should_prompt_unsaved(self) -> bool:
+        """
+        Only nag when a named .pfg file is open and has unwritten edits.
+
+        Day-to-day recording still autosaves JSON crash recovery — no dialog.
+        """
+        return self.is_session_dirty() and bool(self._current_pfg_path)
+
     def _mark_session_dirty(self) -> None:
         self._session_dirty = True
 
@@ -2122,16 +2201,17 @@ class OptiTuneMainWindow(QMainWindow):
 
     # Graceful shutdown
     def closeEvent(self, event: QCloseEvent) -> None:
-        if self.is_session_dirty():
+        # Only when a .pfg file is open and dirty (JSON autosave covers casual sessions)
+        if self.should_prompt_unsaved():
             box = QMessageBox(self)
             box.setIcon(QMessageBox.Icon.Warning)
             box.setWindowTitle("Unsaved changes")
-            box.setText("This piano session has unsaved changes.")
+            box.setText(f"Save changes to\n{self._current_pfg_path}?")
             box.setInformativeText(
-                "Save a .pfg tuning file, discard changes, or cancel and keep working."
+                "Discard keeps the crash-recovery autosave but does not update the .pfg file."
             )
-            save_btn = box.addButton("Save…", QMessageBox.ButtonRole.AcceptRole)
-            discard_btn = box.addButton("Discard", QMessageBox.ButtonRole.DestructiveRole)
+            save_btn = box.addButton("Save", QMessageBox.ButtonRole.AcceptRole)
+            box.addButton("Discard", QMessageBox.ButtonRole.DestructiveRole)
             cancel_btn = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
             box.setDefaultButton(save_btn)
             box.exec()
@@ -2142,16 +2222,28 @@ class OptiTuneMainWindow(QMainWindow):
             if clicked is save_btn:
                 self._on_save()
                 if self.is_session_dirty():
-                    # User cancelled Save As or save failed
+                    # Save failed
                     event.ignore()
                     return
             # Discard: fall through and close
         with contextlib.suppress(Exception):
-            if self._level_timer:
-                self._level_timer.stop()
-            if self._analysis_timer:
-                self._analysis_timer.stop()
+            self._stop_live_analysis()
             self.audio_capture.stop()
             self._save_persisted_piano()
         event.accept()
         super().closeEvent(event)
+
+    def _stop_live_analysis(self) -> None:
+        """Stop timers and analysis worker thread (safe for tests + close)."""
+        if self._level_timer is not None:
+            self._level_timer.stop()
+        if self._analysis_timer is not None:
+            self._analysis_timer.stop()
+        thr = self._analysis_thread
+        if thr is not None:
+            thr.quit()
+            if not thr.wait(2500):
+                thr.terminate()
+                thr.wait(500)
+            self._analysis_thread = None
+            self._analysis_worker = None
