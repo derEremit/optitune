@@ -151,9 +151,7 @@ deferred items).
 **Milestone verification:** fast suite + real-master tests green; manual GUI
 session: arm C1, play a scale, watch auto-advance + indicator + rejection flash.
 
-**M2 effectively complete for productization of the C-then-F path** (indicator,
-flash, ScaleSession extraction, follow modes, series resume). Remaining polish
-is free-recognizer soft xfails (M1 leftover) and optional 0.4.0 release notes.
+**Shipped as `0.4.0`.** Free-recognizer soft xfails remain a non-blocking M1 leftover.
 
 ---
 

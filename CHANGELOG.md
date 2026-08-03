@@ -8,6 +8,20 @@ former `TODO.md`, which served as the living changelog during Phases 0–4.
 
 ---
 
+## [0.4.0] — 2026-08-03
+
+Hands-free workflow productization (Milestone 2):
+
+- **ScaleSession** pure expectation SM (onset gate, commit, next_target, guards);
+  MainWindow is a thin adapter.
+- Status-bar series indicator (`Series: C (n/7) -> note`); rejection flash on
+  armed key (commit + during-capture).
+- Series lifecycle: C↔F exhaustion disarms; QSettings crash-resume for active
+  series; any pitch class is armable (C↔F remain the paired auto-switch).
+- Note-follow modes: Auto / Stepwise / Lock toolbar selector + search windows
+  for the comb recognizer.
+- Real-master C-then-F still green.
+
 ## [0.3.0] — 2026-08-03
 
 Low-note estimator robustness + hands-free scale workflow (Milestone 1):
@@ -16,16 +30,6 @@ Low-note estimator robustness + hands-free scale workflow (Milestone 1):
 - Pure `estimate_pitch` / `F0Tracker` / dual free-armed PFD
 - Shorter capture (1.1s), high-note onset, sim playhead time, series switch after C7
 - Free comb recognizer still soft-xfails a few F notes (armed workflow is solid)
-
-## [Unreleased] — Milestone 1 (low-note estimator) largely done
-
-- **Hands-free C-then-F on real master**: full auto-advance captures C1–C7 then
-  F1–F7 (14 notes) with only real onset/commit (no guided targets).
-- Shorter capture window (1.1 s), easier high-note onset, playhead-driven sim time,
-  Qt timers stopped during feed, paired-series switch after C7 (not C8).
-- Pure `estimate_pitch` + dual free/armed PFD + `F0Tracker`; scale gate no longer
-  vetoes when no pitch estimate yet; commit can accept via tracker if fresh is polluted.
-- Real-piano harness: PFD 14/14 on clean segments; comb 10/14 (F1/high-F soft xfail).
 
 ## [0.2.0] — 2026-08-03
 
