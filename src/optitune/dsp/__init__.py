@@ -26,6 +26,7 @@ from .peaks import (
     parabolic_interpolation,
     pfd_estimate_f0_b,
 )
+from .pitch_estimate import estimate_pitch
 from .stft import compute_stft, get_central_frame_power
 from .synth import (
     detuned_tone,
@@ -51,6 +52,7 @@ __all__ = [
     "cents",
     "compute_stft",
     "detuned_tone",
+    "estimate_pitch",
     "find_spectral_peaks",
     "fletcher_young_partial_frequencies",
     "generate_inharmonic_tone",

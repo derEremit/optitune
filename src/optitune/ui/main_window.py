@@ -32,7 +32,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from scipy.signal import get_window
 
 from optitune.audio import (
     AudioCapture,
@@ -42,12 +41,10 @@ from optitune.audio import (
     resolve_device_index,
 )
 from optitune.dsp import (
-    find_spectral_peaks,
+    estimate_pitch,
     hz_to_midi,
     midi_to_hz,
     midi_to_note_name,
-    pfd_estimate_f0_b,
-    recognize_note,
 )
 from optitune.model import Key, Piano
 from optitune.recording.auto_record import (
@@ -819,162 +816,21 @@ class OptiTuneMainWindow(QMainWindow):
 
     def _estimate_pitch(self, audio: np.ndarray, fs: float, a4: float) -> dict:
         """
-        Core Phase 3/4 estimator using the exact Phase 1 toolkit + comb note ID.
+        Core live estimator — thin adapter over pure dsp.estimate_pitch.
 
-        Returns dict with f_est, midi, target_hz (ET), cents (ET), delta_hz (ET), f0, b (inharmonicity).
-        Target/cents/delta are later adjusted in _run_live_analysis when a curve is active.
-
-        Note identity comes from the inharmonic comb-filter recognizer when confident;
-        fine f0/B still come from PFD. The armed target is only a soft prior.
+        Armed target and last-frame f0 are soft priors only.
         """
         n = len(audio)
         if n < 256:
             return self._fallback_estimate(audio, fs, a4)
-
-        # Longer frames for bass candidates improve low-f0 resolution (spec §3.3).
-        # Pad toward 65536 samples (~1.37 s @ 48 kHz) without truncating longer buffers.
-        analysis = np.asarray(audio, dtype=np.float64)
-        target_n = 65536 if n < 65536 else n
-        # Only force the long frame when we might be looking at bass (armed low, or short buffer)
-        armed = self._record_selected_midi
-        want_long = n < 65536 and (armed is None or armed < 55 or n < 24000)
-        if want_long and n < target_n:
-            pad = np.zeros(target_n, dtype=np.float64)
-            pad[:n] = analysis
-            analysis = pad
-            n = target_n
-
-        # Window (Blackman-Harris is best but heavy; hann + our parabolic is excellent)
-        try:
-            w = get_window("blackmanharris", n)
-        except Exception:
-            w = np.hanning(n)
-
-        spec = np.fft.rfft(analysis * w)
-        power = np.abs(spec) ** 2
-        freqs = np.fft.rfftfreq(n, 1.0 / fs)
-
-        # Find refined peaks (exactly as validated in Phase 1 matrix)
-        peak_fs, peak_as = find_spectral_peaks(freqs, power, min_prominence_db=14.0, max_peaks=25)
-
-        f0 = 440.0
-        B = 0.0003
-        f_dom = 440.0
-        recognized_midi: int | None = None
-
-        # Comb-filter note identity (soft prior = armed target when present)
-        if len(peak_fs) >= 2:
-            match = recognize_note(
-                peak_fs=peak_fs,
-                peak_as=peak_as,
-                a4=a4,
-                prior_midi=armed,
-            )
-            if match is not None and match.confidence >= 0.52:
-                recognized_midi = match.midi
-
-        if len(peak_fs) >= 1:
-            # Dominant visual peak (for spectrum marker)
-            dom_idx = int(np.argmax(peak_as))
-            f_dom = float(peak_fs[dom_idx])
-
-            # Lowest strong peak is an extremely stable proxy for the played note fundamental
-            # on real piano (even with hammer/decay). We still consult PFD for cross-check.
-            f_low = float(peak_fs[0])
-
-            # PFD guess priority (strong → weak):
-            # 1. Armed target when recording (prevents partial/octave lock when we
-            #    already know which key the user is playing)
-            # 2. Comb-recognizer identity (free tracking)
-            # 3. Previous-frame continuity
-            if armed is not None:
-                f0_guess = midi_to_hz(armed, a4)
-            elif recognized_midi is not None:
-                f0_guess = midi_to_hz(recognized_midi, a4)
-            else:
-                f0_guess = max(self._last_f0_guess, 40.0)
-
-            f0_pfd, B = pfd_estimate_f0_b(peak_fs, peak_as, f0_guess=f0_guess, max_n=16)
-
-            # Cross-check PFD vs lowest peak. When we have a strong prior (armed target
-            # or recognizer) and PFD stayed near it, trust PFD even if the lowest peak
-            # is an upper partial (very common on real bass notes).
-            prior_hz = f0_guess
-            pfd_near_prior = (
-                prior_hz > 20
-                and f0_pfd > 20
-                and abs(1200.0 * np.log2(f0_pfd / prior_hz)) < 80.0
-            )
-            if f_low > 20 and f0_pfd > 20:
-                dc = 1200.0 * np.log2(f0_pfd / f_low)
-                f0 = f0_pfd if (abs(dc) < 35.0 or pfd_near_prior) else f_low
-            else:
-                f0 = f_low
-
-            # If the comb recognizer is confident and PFD landed an octave away,
-            # fold f0 by exact octaves toward the recognized fundamental (keep measured
-            # cents; do not replace f0 with ET of the recognized key).
-            if recognized_midi is not None and f0 > 20:
-                target_f = midi_to_hz(recognized_midi, a4)
-                if target_f > 20:
-                    nearest_oct = round(float(np.log2(f0 / target_f)))
-                    if nearest_oct != 0 and abs(nearest_oct) <= 2:
-                        folded = f0 / (2.0**nearest_oct)
-                        # Only fold when the folded value sits near the recognized ET f0
-                        if abs(1200.0 * np.log2(folded / target_f)) < 100.0:
-                            f0 = folded
-
-            # Final sanity
-            if not (25 < f0 < 5500):
-                f0 = f_dom if 25 < f_dom < 5500 else self._last_f0_guess
-
-        # Final tracked frequency (lowest reliable partial or PFD consensus)
-        f_est = float(np.clip(f0, 25.0, 5500.0))
-
-        # Map to nearest piano key.
-        # 1. If armed and f_est is within scale-mode tolerance of the armed ET f0,
-        #    identity is the armed key (a flat C1 must not snap to B0).
-        # 2. Else prefer comb recognition when it agrees with f0-derived midi.
-        # 3. Else nearest ET key of f_est.
-        midi_from_f = round(hz_to_midi(f_est, a4))
-        midi: int
-        if armed is not None and f_est > 20:
-            armed_hz = midi_to_hz(armed, a4)
-            err_to_armed = abs(1200.0 * np.log2(f_est / armed_hz))
-            if err_to_armed <= self.SCALE_MODE_CENT_TOLERANCE:
-                midi = armed
-            elif recognized_midi is not None and abs(recognized_midi - midi_from_f) <= 4:
-                midi = recognized_midi
-            else:
-                midi = int(midi_from_f)
-        elif recognized_midi is not None and abs(recognized_midi - midi_from_f) <= 4:
-            midi = recognized_midi
-        else:
-            midi = int(midi_from_f)
-        midi = max(21, min(108, int(midi)))
-
-        target_hz = midi_to_hz(midi, a4)
-        if target_hz <= 0:
-            target_hz = a4
-
-        # Exact cents and Hz deviation (ET reference — re-targeted later if curve active)
-        if f_est > 1 and target_hz > 1:
-            cents = 1200.0 * np.log2(f_est / target_hz)
-            delta_hz = f_est - target_hz
-        else:
-            cents = 0.0
-            delta_hz = 0.0
-
-        return {
-            "f_est": f_est,
-            "f0": f0,
-            "midi": midi,
-            "target_hz": float(target_hz),
-            "cents": float(cents),
-            "delta_hz": float(delta_hz),
-            "f_dom": f_dom,
-            "b": float(B),  # Phase 4: inharmonicity for the solver
-        }
+        return estimate_pitch(
+            audio,
+            fs,
+            a4=a4,
+            armed_midi=self._record_selected_midi,
+            last_f0_guess=self._last_f0_guess,
+            scale_cent_tol=self.SCALE_MODE_CENT_TOLERANCE,
+        )
 
     def _fallback_estimate(self, audio: np.ndarray, fs: float, a4: float) -> dict:
         """Very cheap fallback (used only on tiny buffers)."""
