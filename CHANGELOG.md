@@ -8,16 +8,15 @@ former `TODO.md`, which served as the living changelog during Phases 0–4.
 
 ---
 
-## [Unreleased] — Milestone 1 (low-note estimator) in progress
+## [Unreleased] — Milestone 1 (low-note estimator) largely done
 
-- **Inharmonic comb-filter note recognizer** (`dsp/note_recognizer.py`): Galembo-style
-  peak-local partial-comb scoring; weak-fundamental synthetic bass still classifies
-  correctly; armed MIDI is a soft prior only.
-- **PFD subharmonic disambiguation** + **65536-sample bass frames** in live
-  `_estimate_pitch`. Real-piano harness: PFD hit-rate **14/14** on C1–C7/F1–F7
-  clean segments (was ~median 19 semitone error); comb recognizer 10/14.
-- Harness: `tests/real_piano/test_estimator_on_real.py` prints PFD vs recognizer
-  table + `SUMMARY:` line; per-note asserts with soft xfails on remaining F1/high-F.
+- **Hands-free C-then-F on real master**: full auto-advance captures C1–C7 then
+  F1–F7 (14 notes) with only real onset/commit (no guided targets).
+- Shorter capture window (1.1 s), easier high-note onset, playhead-driven sim time,
+  Qt timers stopped during feed, paired-series switch after C7 (not C8).
+- Pure `estimate_pitch` + dual free/armed PFD + `F0Tracker`; scale gate no longer
+  vetoes when no pitch estimate yet; commit can accept via tracker if fresh is polluted.
+- Real-piano harness: PFD 14/14 on clean segments; comb 10/14 (F1/high-F soft xfail).
 
 ## [0.2.0] — 2026-08-03
 

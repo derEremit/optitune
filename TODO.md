@@ -99,9 +99,10 @@ Everything downstream is blocked on this.
       wired into live analysis.
 - [x] **Deterministic master-feed sim** — `time.time` patched to audio playhead in
       `_feed_master_with_real_auto_advance` (capture/ignore windows match audio).
-- [ ] **Raise the real-master assertions** — in progress:
-      `test_play_c_series_only_with_real_auto_advance` floor is **>= 2** (C1+C2,
-      deterministic). Next: full C series (7), then C-then-F.
+- [x] **Raise the real-master assertions** — **done**:
+      `test_play_c_series_only` = full C1–C7 (7 notes);
+      `test_play_full_master...` = C1–C7 then F1–F7 (14 notes) with series switch.
+      Deterministic under playhead-driven time + stopped Qt timers.
 - [ ] **Polish recognizer on F1 + high F** — remaining 4 soft xfails on the harness
       (F1 octave-up; F5–F7 octave-down).
 

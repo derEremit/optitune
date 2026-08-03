@@ -562,7 +562,7 @@ class OptiTuneMainWindow(QMainWindow):
                 event = None
             else:
                 # Extra strict attack requirement after recent capture (especially in scale mode)
-                min_rise = 8.0 if require_strong else 4.5
+                min_rise = 6.0 if require_strong else 3.0
 
                 if require_strong and db_rise < min_rise:
                     event = None
@@ -1012,10 +1012,14 @@ class OptiTuneMainWindow(QMainWindow):
 
         # === Dedicated scale recording mode ===
         if self._scale_pitch_class is not None:
+            # Workflow cap: C1-C7 (24-96) and F1-F7 (29-101). Do not arm C8/F8 or the
+            # series never switches and the scale gate blocks the other root class.
+            series_hi = {0: 96, 5: 101}.get(self._scale_pitch_class, 108)
+
             # Find the lowest unmeasured note that matches the current pitch class,
-            # starting from the last recorded one and going upward.
+            # starting from the last recorded one and going upward (within series_hi).
             start = (last or current) - ((last or current) % 12) + self._scale_pitch_class
-            for candidate in range(max(21, start), 109, 12):
+            for candidate in range(max(21, start), min(109, series_hi + 1), 12):
                 if is_unmeasured(candidate):
                     self._record_selected_midi = candidate
                     self.keyboard.set_current_key(candidate)
@@ -1025,18 +1029,31 @@ class OptiTuneMainWindow(QMainWindow):
                     )
                     return
 
-            # If no more in this class, we have exhausted the current root-note series.
-            # The commit-time switch logic in _decide_commit_and_maybe_switch will have
-            # already flipped _scale_pitch_class if the musician just played the first
-            # note of the other known series (C↔F). If we are still here with the old class,
-            # either the user stopped or they are starting something outside the known pair.
+            # If no more in this class, switch to the paired root-note series (C <-> F).
+            other_pc = {0: 5, 5: 0}.get(self._scale_pitch_class)
+            if other_pc is not None:
+                other_hi = {0: 96, 5: 101}.get(other_pc, 108)
+                # First MIDI of this pitch class on the piano (not 21+pc — that is wrong for F).
+                first_other = next(m for m in range(21, 109) if m % 12 == other_pc)
+                for candidate in range(first_other, min(109, other_hi + 1), 12):
+                    if is_unmeasured(candidate):
+                        _diag(
+                            f"[DIAG][AutoAdvance] Scale series pc={self._scale_pitch_class} exhausted "
+                            f"(last={last}); switching to paired series pc={other_pc} -> {candidate}"
+                        )
+                        self._scale_pitch_class = other_pc
+                        self._record_selected_midi = candidate
+                        self.keyboard.set_current_key(candidate)
+                        self.statusBar().showMessage(
+                            f"Series complete. Next series: {candidate} ({midi_to_note_name(candidate)}).",
+                            4000,
+                        )
+                        return
+
             _diag(
                 f"[DIAG][AutoAdvance] Scale series for pc={self._scale_pitch_class} exhausted "
-                f"(last={last}). Will use fallback or wait for commit-time switch on next capture."
+                f"(last={last}). No paired series notes left; using ascending fallback."
             )
-            # We deliberately do *not* clear _scale_pitch_class here - the next successful
-            # capture of a note in the other known class will perform the eager switch.
-            # Manual disarm or arming a different target is the explicit way to leave scale mode.
 
         # === Fallbacks ===
 

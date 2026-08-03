@@ -170,7 +170,9 @@ class AutoRecordController:
             # can participate in onset logic.
             prev_db = self._prev_db
             if prev_db is None:
-                prev_db = current_db - 3.0
+                # Seed so the first real attack after arm has a meaningful rise
+                # (was -3 dB, which blocked confirmation when the streak started mid-note).
+                prev_db = current_db - 12.0
             self._prev_db = current_db
             db_rise = current_db - prev_db
 
@@ -202,8 +204,10 @@ class AutoRecordController:
             octave = (midi - 24) // 12
 
             # High notes decay in a few 50 ms ticks - require fewer consecutive loud samples.
-            # C5 (oct 4): 4 ticks; C6+ (oct 5+): 3 ticks; low/mid: 6.
-            if octave >= 5:
+            # C7 (oct 6): 2; C6 (oct 5): 3; C5 (oct 4): 4; low/mid: 6.
+            if octave >= 6:
+                needed_consecutive = 2
+            elif octave >= 5:
                 needed_consecutive = 3
             elif octave >= 4:
                 needed_consecutive = 4
@@ -212,7 +216,10 @@ class AutoRecordController:
 
             # Extra strictness after a recent capture (post-capture attack requirement)
             require_strong_attack = self._require_strong_attack_until > now
-            min_rise = 8.0 if require_strong_attack else 5.0
+            # Normal attacks only need a modest rise; strong-attack window is for
+            # rejecting pedal noise right after a capture. Keep both low enough that
+            # a real note attack after long quiet always clears the bar.
+            min_rise = 6.0 if require_strong_attack else 3.0
 
             if _DIAG_ONSET_VERBOSE:
                 logger.debug(
@@ -229,8 +236,13 @@ class AutoRecordController:
 
             # Confirm if we have enough consecutive loud ticks *and* there was a sufficiently
             # strong rise at some point in the recent loud streak (not only on this exact tick).
+            # Fallback: long sustained loud without a measured rise (attack tick may have been
+            # gated out of the controller) still counts after needed+2 ticks.
             max_recent_rise = max(self._recent_rises) if self._recent_rises else db_rise
-            confirmed = self._consecutive_loud >= needed_consecutive and max_recent_rise >= min_rise
+            sustained_only = self._consecutive_loud >= needed_consecutive + 2
+            confirmed = self._consecutive_loud >= needed_consecutive and (
+                max_recent_rise >= min_rise or sustained_only
+            )
 
             if confirmed:
                 logger.info(

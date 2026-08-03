@@ -662,7 +662,7 @@ def _feed_master_with_real_auto_advance(
                 if seg_path.exists():
                     for item in json.loads(seg_path.read_text()):
                         if item.get("note_label") == "C7":
-                            c7_end = float(item.get("end_time", 0)) + 1.0
+                            c7_end = float(item.get("end_time", 0)) + 2.0
                             break
             except Exception:
                 c7_end = None
@@ -881,9 +881,9 @@ def test_play_c_series_only_with_real_auto_advance(qtbot):
     captured, captured_list = _feed_master_with_real_auto_advance(window, qtbot, series="C")
     print(f"\n[C-series only] Captured {captured} notes: {sorted(captured_list)}")
 
-    # Deterministic floor after sim-time + timer stop + shorter capture (target: 7).
-    assert captured >= 3, f"Expected at least C1-C3; got {captured} {sorted(captured_list)}"
-    for need in (24, 36, 48):
+    # Full C series (C1-C7) with real auto-advance only.
+    assert captured >= 7, f"Expected full C series (7); got {captured} {sorted(captured_list)}"
+    for need in (24, 36, 48, 60, 72, 84, 96):
         assert need in captured_list, f"MIDI {need} missing; got {sorted(captured_list)}"
 
     window.close()
@@ -908,8 +908,17 @@ def test_play_full_master_recording_with_real_auto_advance(qtbot):
     print(f"\n[Real Auto-Advance on full file] Captured {captured} notes: {sorted(captured_list)}")
     print("This shows what the current auto-advance actually does on a real performance.")
 
-    # At least C1; raise further as series advances cleanly.
-    assert captured >= 1, f"Expected the fixes to at least capture the first C note; got {captured}"
+    # Full C series, then F series should start (C-then-F master recording).
+    assert captured >= 7, (
+        f"Expected at least full C series before F; got {captured} {sorted(captured_list)}"
+    )
+    c_notes = [m for m in captured_list if m % 12 == 0]
+    f_notes = [m for m in captured_list if m % 12 == 5]
+    assert len(c_notes) >= 7, f"Expected 7 C-class notes; got {sorted(c_notes)}"
+    assert len(f_notes) >= 1, (
+        f"Expected series switch into F after C; got F notes {sorted(f_notes)} "
+        f"all={sorted(captured_list)}"
+    )
 
     window.close()
 
