@@ -83,57 +83,76 @@ def estimate_pitch(
         f_dom = float(peak_fs[dom_idx])
         f_low = float(peak_fs[0])
 
-        # PFD guess: armed is a *soft* prior - only when the spectrum looks like
-        # that register (lowest peak near/below ~2.5x armed f0, or recognizer
-        # already within +/-2 semitones). Otherwise a high note of the same pitch
-        # class (e.g. C4 while armed on C1) would be dragged an octave down.
+        free_guess = (
+            midi_to_hz(recognized_midi, a4)
+            if recognized_midi is not None
+            else max(float(last_f0_guess), 40.0)
+        )
+
+        def _pick_f0(f0_pfd: float, f_low: float, prior_hz: float) -> float:
+            pfd_near = (
+                prior_hz > 20
+                and f0_pfd > 20
+                and abs(1200.0 * np.log2(f0_pfd / prior_hz)) < 80.0
+            )
+            if f_low > 20 and f0_pfd > 20:
+                dc = 1200.0 * np.log2(f0_pfd / f_low)
+                return f0_pfd if (abs(dc) < 35.0 or pfd_near) else f_low
+            return f0_pfd if f0_pfd > 20 else f_low
+
+        def _partial_hits(target_hz: float, n_max: int = 6, tol_cents: float = 90.0) -> int:
+            """Count how many of the first n_max partials have a nearby peak.
+
+            tol is loose (~90 ¢) so flat/sharp real pianos still match the ladder.
+            """
+            hits = 0
+            for n in range(1, n_max + 1):
+                fn = target_hz * float(n)
+                for p in peak_fs:
+                    if p > 18 and abs(1200.0 * np.log2(float(p) / fn)) < tol_cents:
+                        hits += 1
+                        break
+            return hits
+
+        # Run free PFD always; also armed PFD when recording a target.
+        f0_free_pfd, B_free = pfd_estimate_f0_b(
+            peak_fs, peak_as, f0_guess=free_guess, max_n=16
+        )
+        f0_free = _pick_f0(f0_free_pfd, f_low, free_guess)
+        B = B_free
+
         if armed_midi is not None:
             armed_hz = midi_to_hz(armed_midi, a4)
-            register_ok = f_low < max(armed_hz * 2.8, 100.0)
-            near_armed = recognized_midi is not None and abs(recognized_midi - armed_midi) <= 2
-            if register_ok or near_armed:
-                f0_guess = armed_hz
-            elif recognized_midi is not None:
-                f0_guess = midi_to_hz(recognized_midi, a4)
+            f0_armed_pfd, B_armed = pfd_estimate_f0_b(
+                peak_fs, peak_as, f0_guess=armed_hz, max_n=16
+            )
+            f0_armed = _pick_f0(f0_armed_pfd, f_low, armed_hz)
+            armed_err = abs(1200.0 * np.log2(f0_armed / armed_hz)) if f0_armed > 20 else 1e9
+            hits = _partial_hits(armed_hz)
+            # Prefer armed only when spectrum supports its partial ladder.
+            # (PFD alone with an armed guess can invent a bass f0 for any harmonic tone.)
+            if armed_err < 80.0 and hits >= 2:
+                f0, B = f0_armed, B_armed
             else:
-                f0_guess = max(float(last_f0_guess), 40.0)
-        elif recognized_midi is not None:
-            f0_guess = midi_to_hz(recognized_midi, a4)
+                nearest_oct = (
+                    round(float(np.log2(f0_free / armed_hz))) if f0_free > 20 else 0
+                )
+                folded = f0_free / (2.0**nearest_oct) if nearest_oct else f0_free
+                fold_err = (
+                    abs(1200.0 * np.log2(folded / armed_hz)) if folded > 20 else 1e9
+                )
+                if (
+                    nearest_oct != 0
+                    and abs(nearest_oct) <= 3
+                    and fold_err < 100.0
+                    and hits >= 2
+                ):
+                    f0, B = folded, B_armed
+                else:
+                    # Different note (or unsupported armed) — trust free estimate
+                    f0 = f0_free
         else:
-            f0_guess = max(float(last_f0_guess), 40.0)
-
-        f0_pfd, B = pfd_estimate_f0_b(peak_fs, peak_as, f0_guess=f0_guess, max_n=16)
-
-        prior_hz = f0_guess
-        pfd_near_prior = (
-            prior_hz > 20 and f0_pfd > 20 and abs(1200.0 * np.log2(f0_pfd / prior_hz)) < 80.0
-        )
-        if f_low > 20 and f0_pfd > 20:
-            dc = 1200.0 * np.log2(f0_pfd / f_low)
-            f0 = f0_pfd if (abs(dc) < 35.0 or pfd_near_prior) else f_low
-        else:
-            f0 = f_low
-
-        # Fold octaves toward fold target only when this looks like a partial/octave
-        # error of the *same* note - not when a genuinely higher note is playing.
-        # Require a peak near the fold-target fundamental, or that PFD's guess
-        # *was* that fundamental and stayed there (pfd_near_prior for that target).
-        fold_midi = armed_midi if armed_midi is not None else recognized_midi
-        if fold_midi is not None and f0 > 20:
-            target_f = midi_to_hz(fold_midi, a4)
-            if target_f > 20:
-                nearest_oct = round(float(np.log2(f0 / target_f)))
-                if nearest_oct != 0 and abs(nearest_oct) <= 3:
-                    folded = f0 / (2.0**nearest_oct)
-                    near_target = abs(1200.0 * np.log2(folded / target_f)) < 120.0
-                    has_fund_peak = any(
-                        p > 18 and abs(1200.0 * np.log2(float(p) / target_f)) < 60.0
-                        for p in peak_fs
-                    )
-                    # Only trust pfd_near_prior when the PFD guess *was* this target
-                    guess_was_target = abs(1200.0 * np.log2(prior_hz / target_f)) < 50.0
-                    if near_target and (has_fund_peak or (guess_was_target and pfd_near_prior)):
-                        f0 = folded
+            f0 = f0_free
 
         if not (25 < f0 < 5500):
             f0 = f_dom if 25 < f_dom < 5500 else float(last_f0_guess)

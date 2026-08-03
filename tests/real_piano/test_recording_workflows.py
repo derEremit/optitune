@@ -790,6 +790,51 @@ def _feed_master_with_real_auto_advance(
     return captured, captured_midis
 
 
+def _prepare_clean_armed_window(qtbot, first_midi: int = 24):
+    """Shared clean-slate arm for real auto-advance diagnostics."""
+    window = _create_test_window(qtbot)
+    window._piano = None
+    window.keyboard.clear_all()
+    window._scale_pitch_class = None
+    window._last_recorded_midi = None
+    window._ignore_onset_until = 0.0
+    window._require_strong_attack_until = 0.0
+    window._prev_level_db = -60.0
+    if hasattr(window, "_f0_tracker"):
+        window._f0_tracker.clear()
+
+    window._record_selected_midi = first_midi
+    window.keyboard.set_current_key(first_midi)
+    window._auto_advance_after_record = True
+    window._auto_advance_action.setChecked(True)
+    window._shown_arm_help = True
+    window._arm_record_action.setChecked(True)
+    window._toggle_auto_record_arm(True)
+    return window
+
+
+def test_play_c_series_only_with_real_auto_advance(qtbot):
+    """
+    Fast TDD driver: feed only the C-series portion of the master recording
+    with pure real auto-advance (no guided target injection).
+
+    Raise the captured floor as estimator quality improves.
+    """
+    window = _prepare_clean_armed_window(qtbot, first_midi=24)
+    captured, captured_list = _feed_master_with_real_auto_advance(
+        window, qtbot, series="C"
+    )
+    print(f"\n[C-series only] Captured {captured} notes: {sorted(captured_list)}")
+
+    # Floor raised as M1 estimator work lands. Target full C series (7 notes).
+    assert captured >= 2, (
+        f"Expected at least C1+C2 with armed-prior estimator; got {captured} {sorted(captured_list)}"
+    )
+    assert 24 in captured_list, f"C1 must be captured; got {sorted(captured_list)}"
+
+    window.close()
+
+
 def test_play_full_master_recording_with_real_auto_advance(qtbot):
     """
     Stricter version: Arm only on C1 and let the real auto-advance logic
@@ -798,49 +843,18 @@ def test_play_full_master_recording_with_real_auto_advance(qtbot):
 
     This is the main TDD driver for the expectation-driven workflow.
 
-    IMPORTANT: For active development / iteration, strongly prefer the fast
-    C-series-only variant instead:
-        uv run pytest -m real_piano ...::test_play_c_series_only_with_real_auto_advance -s
-    or set OPTITUNE_FAST_C=1 when running the full test.
+    For fast iteration prefer:
+        test_play_c_series_only_with_real_auto_advance
+    or OPTITUNE_FAST_C=1 on this test.
     """
-    window = _create_test_window(qtbot)
-
-    # Clean slate for the diagnostic: do not count pre-existing measurements from
-    # ~/.config/optitune/current_piano.json or prior test runs. The captured count
-    # must only reflect notes committed by the current auto-advance run.
-    window._piano = None
-    window.keyboard.clear_all()
-    window._scale_pitch_class = None
-    window._last_recorded_midi = None
-    window._ignore_onset_until = 0.0
-    window._require_strong_attack_until = 0.0
-    window._prev_level_db = -60.0
-
-    # Arm only the first note
-    first = 24  # C1
-    window._record_selected_midi = first
-    window.keyboard.set_current_key(first)
-    window._auto_advance_after_record = True
-    window._auto_advance_action.setChecked(True)
-    window._shown_arm_help = True
-    window._arm_record_action.setChecked(True)
-    window._toggle_auto_record_arm(True)
+    window = _prepare_clean_armed_window(qtbot, first_midi=24)
 
     captured, captured_list = _feed_master_with_real_auto_advance(window, qtbot)
 
     print(f"\n[Real Auto-Advance on full file] Captured {captured} notes: {sorted(captured_list)}")
     print("This shows what the current auto-advance actually does on a real performance.")
 
-    # Current state after full iteration on the real master (priorities 1-7):
-    # - First C note reliably produces full ONSET → CAPTURE_FINISHED → commit decision
-    #   in good runs (thanks to controller recent-rise fix + gate grace + armed-proximity robustness).
-    # - During-capture and commit-time checks frequently fire REJECT on low notes because
-    #   the live/fresh estimator often reports strong partials or octaves (e.g. 48/72 when
-    #   the actual sounding note is C1=24). This is the remaining bottleneck for clean
-    #   multi-note C-then-F series with pure real auto-advance.
-    # The test asserts at least the first note so the pipeline is exercised. Full series
-    # will improve with better low-note pitch tracking (outside the current strict scope of
-    # expectation-driven *onset* detection).
+    # At least C1; raise further as series advances cleanly.
     assert captured >= 1, f"Expected the fixes to at least capture the first C note; got {captured}"
 
     window.close()

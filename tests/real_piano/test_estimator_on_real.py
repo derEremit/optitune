@@ -23,12 +23,14 @@ import numpy as np
 import pytest
 
 from optitune.dsp import (
+    estimate_pitch,
     find_spectral_peaks,
     hz_to_midi,
     midi_to_hz,
     pfd_estimate_f0_b,
     recognize_from_audio,
 )
+from optitune.dsp.peaks import cents
 from tests.real_piano.loader import list_recordings, load_recording
 
 pytestmark = pytest.mark.real_piano
@@ -197,3 +199,34 @@ def test_recognizer_per_note(name: str, expected: int):
     if det != expected and (expected < 48 or expected >= 77):
         pytest.xfail(f"recognizer still weak on {name}: got {det}, expected {expected}")
     assert det == expected, f"{name}: recognizer got {det}, expected {expected}"
+
+
+def _mid_segment(audio: np.ndarray) -> np.ndarray:
+    n = len(audio)
+    return audio[int(n * 0.2) : int(n * 0.8)].astype(np.float64)
+
+
+@pytest.mark.parametrize(
+    "name,expected",
+    [(n, m) for n, m in sorted(EXPECTED_MIDI.items()) if n.startswith("C")],
+)
+def test_production_estimate_with_armed_prior_c_series(name: str, expected: int):
+    """
+    Production estimate_pitch (what commit-time uses) with armed_midi set.
+
+    This is the TDD contract for scale recording: when the user is armed on the
+    true key and the buffer holds that note, f0 must land within scale tolerance
+    and identity must be the armed key.
+    """
+    if name not in list_recordings():
+        pytest.skip(f"{name} not in fixtures")
+
+    audio, sr, _meta = load_recording(name)
+    seg = _mid_segment(audio)
+    est = estimate_pitch(seg, float(sr), a4=440.0, armed_midi=expected)
+    armed_hz = midi_to_hz(expected)
+    err = abs(cents(est["f_est"], armed_hz))
+    assert est["midi"] == expected, (
+        f"{name}: midi={est['midi']} f_est={est['f_est']:.2f} (want {expected})"
+    )
+    assert err <= 140.0, f"{name}: f0 err {err:.1f}¢ (f_est={est['f_est']:.2f} want ~{armed_hz:.2f})"
