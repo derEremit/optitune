@@ -142,13 +142,18 @@ deferred items).
       `estimate_pitch` and toolbar **Follow** combo (Auto / Stepwise / Lock).
       Keyboard click sets the lock anchor. Scale/auto-record still uses armed
       soft prior independently of free-listening follow mode.
-- [ ] **Generalize beyond C↔F** — series = any root pitch-class set the user
-      arms; `_maybe_switch_series` already sees "third class" events (currently
-      logged as ignored) — allow switching to any armed-workflow class, keep
-      eagerness. Update the design doc when behavior changes.
+- [x] **Generalize beyond C↔F** — any pitch class is a series (walks octaves to
+      compass/series_hi). C↔F remain the only *paired* auto-switch pair for the
+      hands-free master workflow. Non-paired classes exhaust cleanly (None).
+      Status indicator names all 12 classes. Design: still C↔F for product
+      default; any root is armable.
 
 **Milestone verification:** fast suite + real-master tests green; manual GUI
 session: arm C1, play a scale, watch auto-advance + indicator + rejection flash.
+
+**M2 effectively complete for productization of the C-then-F path** (indicator,
+flash, ScaleSession extraction, follow modes, series resume). Remaining polish
+is free-recognizer soft xfails (M1 leftover) and optional 0.4.0 release notes.
 
 ---
 

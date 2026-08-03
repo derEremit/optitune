@@ -465,13 +465,15 @@ class OptiTuneMainWindow(QMainWindow):
             self._series_label.setText("  Series: -")
             self._series_label.setStyleSheet("color: #a0a0a8;")
             return
-        name = {0: "C", 5: "F"}.get(pc, f"pc{pc}")
-        series_hi = {0: 96, 5: 101}.get(pc, 108)
+        from optitune.recording.scale_session import pitch_class_name, series_hi as _series_hi
+
+        name = pitch_class_name(pc)
+        hi = _series_hi(pc)
         first = next(m for m in range(21, 109) if m % 12 == pc)
-        total = len(list(range(first, series_hi + 1, 12)))
+        total = len(list(range(first, hi + 1, 12)))
         measured = 0
         if self._piano is not None:
-            for m in range(first, series_hi + 1, 12):
+            for m in range(first, hi + 1, 12):
                 k = self._piano.keys.get(m)
                 if k is not None and (k.measured_f0 is not None or k.measured_b is not None):
                     measured += 1
@@ -1324,7 +1326,7 @@ class OptiTuneMainWindow(QMainWindow):
                 self._scale_session.exit_scale()
                 self._clear_scale_session_settings()
                 self.statusBar().showMessage(
-                    "Series complete — all C and F notes captured. Disarmed.",
+                    "Series complete — no more notes in this (paired) series. Disarmed.",
                     6000,
                 )
             if next_midi:

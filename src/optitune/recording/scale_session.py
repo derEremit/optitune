@@ -13,8 +13,40 @@ from dataclasses import dataclass
 SCALE_MODE_CENT_TOLERANCE = 140.0
 ONSET_GATE_CENT_TOLERANCE = 800.0
 
-# Workflow caps for the master C-then-F series (C7=96, F7=101)
+# Workflow caps for the master C-then-F series (C7=96, F7=101).
+# Other pitch classes use the highest MIDI of that class on the 88-key compass.
 _SERIES_HI = {0: 96, 5: 101}
+
+# Paired auto-advance after exhaustion (hands-free C-then-F workflow)
+_PAIRED_SERIES = {0: 5, 5: 0}
+
+_PC_NAMES = {
+    0: "C",
+    1: "C#",
+    2: "D",
+    3: "D#",
+    4: "E",
+    5: "F",
+    6: "F#",
+    7: "G",
+    8: "G#",
+    9: "A",
+    10: "A#",
+    11: "B",
+}
+
+
+def series_hi(pc: int) -> int:
+    """Highest MIDI to walk for this pitch class (inclusive)."""
+    pc = int(pc) % 12
+    if pc in _SERIES_HI:
+        return _SERIES_HI[pc]
+    # Last note of this class on a standard 88-key piano
+    return max(m for m in range(21, 109) if m % 12 == pc)
+
+
+def pitch_class_name(pc: int) -> str:
+    return _PC_NAMES.get(int(pc) % 12, f"pc{pc}")
 
 
 def _hz_to_midi(f_hz: float, a4: float = 440.0) -> float:
@@ -172,21 +204,21 @@ class ScaleSession:
             return 21 <= m <= 108 and m not in measured
 
         pc = self.scale_pitch_class
-        series_hi = _SERIES_HI.get(pc, 108)
+        hi = series_hi(pc)
         cur = last_recorded if last_recorded is not None else (current or 24)
         # Next octave of the same class (strictly above last_recorded when set)
         start = cur - (cur % 12) + pc
         if last_recorded is not None and start <= last_recorded:
             start = last_recorded + 12
-        for candidate in range(max(21, start), min(109, series_hi + 1), 12):
+        for candidate in range(max(21, start), min(109, hi + 1), 12):
             if unmeasured(candidate):
                 return candidate
 
-        # Paired series (C <-> F)
-        other_pc = {0: 5, 5: 0}.get(pc)
+        # Optional paired series (C <-> F hands-free workflow only)
+        other_pc = _PAIRED_SERIES.get(pc)
         if other_pc is None:
             return None
-        other_hi = _SERIES_HI.get(other_pc, 108)
+        other_hi = series_hi(other_pc)
         first_other = next(m for m in range(21, 109) if m % 12 == other_pc)
         for candidate in range(first_other, min(109, other_hi + 1), 12):
             if unmeasured(candidate):
@@ -244,12 +276,14 @@ class ScaleSession:
                         reason="too_far",
                     )
 
+        # Eager series switch: if we accepted a note of a *different* class
+        # (can happen after class gate is off or via tracker remap), adopt it.
+        # For same-class accepts switch_to stays None. Cross-class accepts are
+        # rare under the class gate but kept for generalization / future modes.
         switch_to: int | None = None
         if current_pc is not None and captured_pc != current_pc:
-            other = 5 if current_pc == 0 else 0
-            if captured_pc == other:
-                switch_to = captured_pc
-                self.scale_pitch_class = captured_pc
+            switch_to = captured_pc
+            self.scale_pitch_class = captured_pc
 
         return CommitDecision(
             accept=True,

@@ -103,6 +103,31 @@ def test_series_exhaustion_switches_f_to_c():
     assert s.scale_pitch_class == 0
 
 
+def test_any_pitch_class_series_walks_octaves():
+    """Arming G (pc=7) walks G1,G2,... without requiring C/F."""
+    s = ScaleSession()
+    s.enter_scale(31, now=0.0)  # G1
+    assert s.scale_pitch_class == 7
+    measured: set[int] = set()
+    n = s.next_target(last_recorded=31, measured=measured)
+    assert n == 43  # G2
+    measured |= {31, 43}
+    n = s.next_target(last_recorded=43, measured=measured)
+    assert n == 55  # G3
+
+
+def test_non_paired_series_exhausts_without_switch():
+    """G series has no pair — exhaustion returns None, pc unchanged."""
+    s = ScaleSession()
+    s.enter_scale(31, now=0.0)
+    # All G in 21..108
+    measured = set(m for m in range(21, 109) if m % 12 == 7)
+    last = max(measured)
+    n = s.next_target(last_recorded=last, measured=measured)
+    assert n is None
+    assert s.scale_pitch_class == 7
+
+
 def test_commit_accept_same_class_near_armed():
     s = ScaleSession()
     s.enter_scale(24, now=0.0)
