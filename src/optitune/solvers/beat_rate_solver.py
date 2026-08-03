@@ -51,12 +51,21 @@ class BeatRateSolver:
         if 69 not in constraints.locked_notes:
             offs[69 - MIDI_LOW] = 0.0
 
+        # Optional temperament table (cents vs ET) layered on stretch
+        if constraints.temperament_offsets is not None:
+            t_off = np.asarray(constraints.temperament_offsets, dtype=float).reshape(-1)
+            if t_off.shape[0] == N_KEYS:
+                offs = offs + t_off
+                if 69 not in constraints.locked_notes:
+                    offs[69 - MIDI_LOW] = 0.0
+
         yield TuningCurve(
             offsets_cents=offs,
             solver_name=self.name,
             metadata={
                 "a4": float(constraints.a4),
                 "treble_rule": constraints.treble_rule,
+                "temperament": constraints.temperament,
                 "measured_b_count": int(np.sum(np.isfinite(b_estimates))),
             },
         )

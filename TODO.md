@@ -171,13 +171,12 @@ entropy and friends are not started.
       roll updates, A4 pin, optional Railsback prior, yields intermediate curves.
       Tests: deterministic, A4 pin, detuned pair aligns, prior shape. GUI Solver
       combo (beat-rate | entropy) + registry. Numba deferred (pure NumPy ok).
-- [ ] **Octave-local entropy** — `src/optitune/solvers/entropy_octave.py`
-      (Szwajcowski–Pilch, spec §6.3): one variable per key, ~50 trial cents,
-      outward from A4, deterministic. ~100 LOC reusing the entropy machinery.
-- [ ] **Temperaments** — `src/optitune/model/temperaments.py`: ET, Werckmeister
-      III, Kirnberger III, Vallotti, Young, Meantone as cent-offset tables from
-      ET; feed into solvers via `TuningConstraints` (regularizer target in
-      beat-rate). Test: known third/fifth deviations for Werckmeister III.
+- [x] **Octave-local entropy** — `solvers/entropy_octave.py`: outward from A4,
+      grid search per key vs nearest set neighbor; registered as
+      `octave-entropy`.
+- [x] **Temperaments** — `model/temperaments.py`: ET, Werckmeister III,
+      Kirnberger III, Vallotti, Young, ¼-comma meantone. 12-class + 88-key
+      tables; `TuningConstraints.temperament_offsets` layered on beat-rate.
 - [ ] **Solver worker thread** — `QThread` (spec §4.1) consuming the
       `Iterator[TuningCurve]`, streaming intermediate curves to the GUI,
       cancellable. `_on_compute_curve` grows a solver picker (beat-rate default).

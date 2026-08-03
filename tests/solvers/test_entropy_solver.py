@@ -95,6 +95,17 @@ def test_entropy_aligns_two_detuned_copies():
     assert abs(c2 - c1) < 20.0, f"relative still large: {c1}, {c2}"
 
 
+def test_octave_entropy_pins_a4_and_runs():
+    from optitune.solvers import OctaveEntropySolver
+
+    L = _synthetic_piano_spectra()
+    b = np.full(N_KEYS, np.nan)
+    tc = next(OctaveEntropySolver().solve(L, b, TuningConstraints()))
+    assert tc.solver_name == "octave-entropy"
+    assert tc.offset_for_midi(A4_MIDI) == pytest.approx(0.0, abs=0.01)
+    assert len(tc.offsets_cents) == 88
+
+
 def test_entropy_railsback_shape_on_realistic_combs():
     """
     With a Railsback prior, the final curve stays musically sane (A4 pin,

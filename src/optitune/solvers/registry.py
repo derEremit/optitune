@@ -5,11 +5,13 @@ from __future__ import annotations
 from optitune.solvers.base import Solver
 from optitune.solvers.beat_rate_solver import BeatRateSolver
 from optitune.solvers.entropy import EntropySolver
+from optitune.solvers.entropy_octave import OctaveEntropySolver
 
 # Factory map: name -> zero-arg constructor
 SOLVER_FACTORIES: dict[str, type] = {
     "beat-rate": BeatRateSolver,
     "entropy": EntropySolver,
+    "octave-entropy": OctaveEntropySolver,
 }
 
 

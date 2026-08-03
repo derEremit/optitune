@@ -14,12 +14,14 @@ from .beat_rate import (
 )
 from .beat_rate_solver import BeatRateSolver
 from .entropy import EntropySolver
+from .entropy_octave import OctaveEntropySolver
 from .registry import available_solvers, get_solver
 from .simple_stretch import compute_heuristic_stretch_curve
 
 __all__ = [
     "BeatRateSolver",
     "EntropySolver",
+    "OctaveEntropySolver",
     "Solver",
     "TuningConstraints",
     "TuningCurve",
