@@ -129,9 +129,13 @@ deferred items).
       on arm / disarm / reject / successful advance. pytest-qt coverage.
 - [x] **Subtle rejection feedback** — `KeyboardWidget.flash_rejection` (hot pink
       flash, preserves ARMED); wired on commit reject in MainWindow. pytest-qt.
-- [ ] **Series lifecycle UX** — completion feedback when a series is exhausted;
-      manual series exit; persist active series + last-recorded note in QSettings
-      so a crash mid-session resumes cleanly.
+- [x] **Series lifecycle UX (partial)** — paired C↔F exhaustion: clear target,
+      disarm, exit scale, status "Series complete…". Single-series→paired switch
+      message already existed. Still open: manual series exit control; persist
+      active series + last-recorded note in QSettings for crash resume.
+- [x] **Onset gate + post-capture guards via ScaleSession** —
+      `should_suppress_onset` + `set_post_capture_guards`; MainWindow mirrors
+      ignore/require-strong fields as properties.
 - [ ] **Note-follow modes** (spec §3.6, parity row "Stepwise / Lock"): **Auto**
       (recognizer picks any note), **Stepwise** (±1 semitone from locked note),
       **Lock** (manual only) — toolbar selector; scale mode is a fourth,

@@ -154,8 +154,6 @@ class OptiTuneMainWindow(QMainWindow):
         self._auto_advance_after_record: bool = True  # very useful for walking the piano
         # Expectation layer (pure SM) — properties below mirror fields for compat
         self._scale_session = ScaleSession()
-        self._ignore_onset_until: float = 0.0
-        self._require_strong_attack_until: float = 0.0
         self._prev_level_db: float = -60.0
         self._last_during_cap_check: float = 0.0
         self._curve_status_label: QLabel | None = None
@@ -605,45 +603,25 @@ class OptiTuneMainWindow(QMainWindow):
                     event = None
                 else:
                     # === Layer 1: Expectation-driven pitch-class gate (scale recording mode) ===
-                    # If we are in a known root-note series (_scale_pitch_class set), only feed the
-                    # controller when the most recent high-quality analysis (_last_est) says the
-                    # current sound is within ~140 cents of the expected pitch class.
-                    # This prevents the energy detector from latching onto wrong notes (C# etc.)
-                    # while the user is playing a clean C-then-F series.
-                    scale_pc = getattr(self, "_scale_pitch_class", None)
+                    # Pure logic in ScaleSession.should_suppress_onset; UI only logs + feeds.
+                    scale_pc = self._scale_pitch_class
                     if scale_pc is not None:
-                        # Pass whatever we have; the helper will compute the best precise midi_f
-                        # from f_est if available, and decide acceptance.
                         est_midi_for_gate = None
+                        f_est_gate = None
                         if self._last_est:
                             m = self._last_est.get("midi")
                             if m is not None:
                                 est_midi_for_gate = float(m)
-
-                        in_grace = getattr(self, "_scale_gate_grace_until", 0) > now
-                        pc_ok = self._pitch_class_matches_expectation(
-                            est_midi_for_gate, scale_pc, tolerance=self.ONSET_GATE_CENT_TOLERANCE
-                        )
-
-                        # Additional robustness for real piano low-note material (seen in long diagnostics):
-                        # The live estimator often reports harmonics or octaves (e.g. 27 or 48 when armed on C1=24).
-                        # If we have a specific armed target in the current scale class, allow the energy
-                        # controller to see loud ticks if the est is not insanely far from the armed note.
-                        # This is still pure expectation logic (the armed target *is* the expectation).
-                        # The strict commit-time gate with fresh analysis remains the final filter.
+                            f_est_gate = self._last_est.get("f_est")
                         armed = self._record_selected_midi
-                        # ~2 octaves tolerance for estimator weaknesses on real low notes
-                        close_to_armed = (
-                            armed is not None
-                            and est_midi_for_gate is not None
-                            and abs(est_midi_for_gate - armed) <= 20
+                        suppress = self._scale_session.should_suppress_onset(
+                            est_midi=est_midi_for_gate,
+                            armed_midi=armed,
+                            now=now,
+                            f_est=float(f_est_gate) if f_est_gate else None,
+                            a4=float(self._initial_a4),
                         )
-
-                        # No estimate yet → do not veto energy detection (commit gate is authoritative).
-                        # Suppress only when we have a pitch estimate that is clearly wrong class.
-                        no_estimate = est_midi_for_gate is None
-                        if not no_estimate and not pc_ok and not in_grace and not close_to_armed:
-                            # Hard rejection for this tick - do not let the energy-based controller see it.
+                        if suppress:
                             _diag(
                                 "[DIAG][ScaleGate] SUPPRESSED (wrong pitch class) | "
                                 "est_midi_approx=%s expected_pc=%s dB=%.1f",
@@ -654,20 +632,9 @@ class OptiTuneMainWindow(QMainWindow):
                             )
                             event = None
                         else:
-                            if no_estimate and not in_grace:
+                            if est_midi_for_gate is None and not self._scale_session.in_grace(now):
                                 _diag(
                                     "[DIAG][ScaleGate] no-est allow energy path | armed=%s dB=%.1f",
-                                    armed,
-                                    db,
-                                    verbose_only=True,
-                                )
-                            elif (in_grace or close_to_armed) and not pc_ok:
-                                reason = "GRACE" if in_grace else "close_to_armed"
-                                _diag(
-                                    "[DIAG][ScaleGate] %s allowed (armed intent) | "
-                                    "est_midi_approx=%s armed=%s dB=%.1f",
-                                    reason,
-                                    est_midi_for_gate,
                                     armed,
                                     db,
                                     verbose_only=True,
@@ -1075,12 +1042,17 @@ class OptiTuneMainWindow(QMainWindow):
                 self.keyboard.set_current_key(candidate)
                 self.statusBar().showMessage(msg, 4000)
                 return
+            # Paired C↔F series fully measured — leave selection cleared for
+            # completion UX (caller disarms + exit_scale). Do not fall through
+            # to ascending non-series keys while still in scale mode.
             _diag(
                 f"[DIAG][AutoAdvance] Scale series for pc={self._scale_pitch_class} exhausted "
-                f"(last={last}). No paired series notes left; using ascending fallback."
+                f"(last={last}). No paired series notes left."
             )
+            self._record_selected_midi = None
+            return
 
-        # === Fallbacks ===
+        # === Fallbacks (non-scale / free auto-advance) ===
 
         # Simple ascending from current (still useful)
         for candidate in range(current + 1, 109):
@@ -1267,8 +1239,7 @@ class OptiTuneMainWindow(QMainWindow):
 
             # Brief post-reject guard (must stay short vs scale note spacing)
             now = _time.time()
-            self._require_strong_attack_until = now + 0.45
-            self._ignore_onset_until = now + 0.12
+            self._scale_session.set_post_capture_guards(now=now, success=False)
 
             # Re-arm the exact same target so the red ARMED state + controller stay alive
             if target is not None:
@@ -1278,9 +1249,6 @@ class OptiTuneMainWindow(QMainWindow):
                 self.keyboard.set_current_key(target)
                 self.keyboard.flash_rejection(target, duration_ms=450)
                 self._apply_auto_record_visual_force()
-                import time as _t
-
-                self._scale_gate_grace_until = _t.time() + 0.4  # allow quick retry
             self._during_capture_rejection_until = now + 0.4
             self._update_series_status()
             return
@@ -1301,37 +1269,37 @@ class OptiTuneMainWindow(QMainWindow):
         if getattr(self, "_auto_advance_after_record", True):
             self._on_record_next()
             next_midi = self._record_selected_midi
+            now = _time.time()
+            self._scale_session.set_post_capture_guards(now=now, success=True)
             if next_midi:
                 _diag(f"[DIAG][AutoAdvance] Re-armed via _on_record_next → {next_midi}")
                 self._auto_record_ctrl.arm(next_midi)
                 self.keyboard.set_key_state(next_midi, KeyState.ARMED)
                 self.keyboard.set_current_key(next_midi)
                 self._apply_auto_record_visual_force()
-                import time as _t
-
-                self._scale_gate_grace_until = _t.time() + 0.45
-
-            self._arm_record_action.setChecked(True)
-            self._arm_record_action.setText("⏹ Stop Arming")
-            self.statusBar().showMessage(
-                f"Auto-captured. Re-armed for next key ({next_midi}). Go play it.",
-                0,
-            )
+                self._arm_record_action.setChecked(True)
+                self._arm_record_action.setText("⏹ Stop Arming")
+                self.statusBar().showMessage(
+                    f"Auto-captured. Re-armed for next key ({next_midi}). Go play it.",
+                    0,
+                )
+            else:
+                # Paired series exhausted (C1–C7 and F1–F7 all measured)
+                self._auto_record_ctrl.disarm()
+                self._arm_record_action.setChecked(False)
+                self._arm_record_action.setText("🎯 Arm for Auto-Record")
+                self._scale_session.exit_scale()
+                self.statusBar().showMessage(
+                    "Series complete — all C and F notes captured. Disarmed.",
+                    6000,
+                )
             self._update_series_status()
-
-            # Short guards so the next scale note attack is not swallowed
-            now = _time.time()
-            self._require_strong_attack_until = now + 0.35
-            self._ignore_onset_until = now + 0.12
         else:
             self._auto_record_ctrl.disarm()
             self.statusBar().showMessage(
                 "Auto-captured. Arm again when ready for the next note.", 4000
             )
-            now = _time.time()
-            self._ignore_onset_until = now + 0.15
-            self._require_strong_attack_until = now + 0.35
-            self._during_capture_rejection_until = 0.0
+            self._scale_session.set_post_capture_guards(now=_time.time(), success=True)
 
     # ---------------- Expectation-driven scale mode helpers (Layer 1+) ----------------
 
@@ -1361,6 +1329,22 @@ class OptiTuneMainWindow(QMainWindow):
     @_during_capture_rejection_until.setter
     def _during_capture_rejection_until(self, value: float) -> None:
         self._scale_session.during_capture_rejection_until = float(value)
+
+    @property
+    def _ignore_onset_until(self) -> float:
+        return self._scale_session.ignore_onset_until
+
+    @_ignore_onset_until.setter
+    def _ignore_onset_until(self, value: float) -> None:
+        self._scale_session.ignore_onset_until = float(value)
+
+    @property
+    def _require_strong_attack_until(self) -> float:
+        return self._scale_session.require_strong_attack_until
+
+    @_require_strong_attack_until.setter
+    def _require_strong_attack_until(self, value: float) -> None:
+        self._scale_session.require_strong_attack_until = float(value)
 
     def _pitch_class_matches_expectation(
         self, est_midi_f: float | None, expected_pc: int, *, tolerance: float | None = None
